@@ -69,14 +69,29 @@ df$yield_curve <- df$us10y - df$us3m
 
 # 4b. Extended VIX: trailing 21d annualised realised vol of SPX pre-1990,
 #     actual VIX from 1990 onwards. Trailing window -> no look-ahead.
-spx_logret <- c(NA, diff(log(df$sp500)))
-rv_window  <- 21
-df$rv_spx <- rollapplyr(spx_logret, width = rv_window,
-                        FUN = function(x) sd(x, na.rm = FALSE) * sqrt(252) * 100,
-                        fill = NA)
+# --- Rebuild rv_spx on the clean SPX calendar (no merge-gap NAs) -----------
+spx_raw <- bbg_data$sp500[order(bbg_data$sp500$date), ]
+spx_raw$logret <- c(NA, diff(log(spx_raw$sp500)))
+spx_raw$rv_spx <- rollapplyr(
+  spx_raw$logret, width = rv_window,
+  FUN = function(x) sd(x) * sqrt(252) * 100,
+  fill = NA
+)
 
-vix_start <- as.Date("1990-01-02")
-df$vix_extended <- ifelse(df$date < vix_start, df$rv_spx, df$vix)
+# --- Single vix_extended: realised vol pre-1990, actual VIX from 1990 ------
+ext <- merge(spx_raw[, c("date", "rv_spx")], bbg_data$vix, by = "date", all = TRUE)
+ext$vix_extended <- ifelse(ext$date < vix_start, ext$rv_spx, ext$vix)
+ext <- ext[, c("date", "vix_extended")]
+
+df$rv_spx       <- NULL
+df$vix_extended <- NULL
+df <- merge(df, ext, by = "date", all.x = TRUE)
+
+# --- Drop us10y, truncate to common start date -----------------------------
+df$us10y <- NULL
+df <- df[order(df$date), ]
+first_full <- min(df$date[complete.cases(df)])
+df <- df[df$date >= first_full, ]
 
 # 4c. Stock-bond correlation: rolling 63d corr of SPX returns and bond-return
 #     proxy (= -dY on the 10Y). Sign convention matches the textbook stock-bond
