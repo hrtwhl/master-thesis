@@ -5,7 +5,7 @@ library(Rblpapi)
 library(fredr)
 library(zoo)
 
-# fredr_set_key("YOUR_FRED_KEY")   # or set FRED_API_KEY in ~/.Renviron
+fredr_set_key("263fff36e95136e168c2b9128597195d")   # or set FRED_API_KEY in ~/.Renviron
 
 blpConnect()
 
@@ -39,8 +39,9 @@ fetch_bbg <- function(name, spec) {
 # --- 2. FRED series ---------------------------------------------------------
 
 fred_series <- list(
-  oil  = list(ticker = "DCOILWTICO", start = "1986-01-01"),  # WTI Cushing spot
-  us3m = list(ticker = "DTB3",       start = "1954-01-01")   # 3M T-bill secondary market
+  oil         = list(ticker = "DCOILWTICO", start = "1986-01-01"),  # WTI Cushing spot
+  us3m        = list(ticker = "DTB3",       start = "1954-01-01"),  # 3M T-bill secondary market
+  yield_curve = list(ticker = "T10Y3M",     start = "1982-01-01")   # 10Y CMT minus 3M CMT
 )
 
 fetch_fred <- function(name, spec) {
@@ -62,14 +63,14 @@ df <- Reduce(function(x, y) merge(x, y, by = "date", all = TRUE),
              c(bbg_data, fred_data))
 df <- df[order(df$date), ]
 
-# --- 4. Derived regime variables -------------------------------------------
+# --- 4. Derived variables ---------------------------------------------------
 
-# 4a. Yield curve slope (10Y - 3M)
-df$yield_curve <- df$us10y - df$us3m
+rv_window   <- 21
+vix_start   <- as.Date("1990-01-02")
+corr_window <- 63
 
-# 4b. Extended VIX: trailing 21d annualised realised vol of SPX pre-1990,
-#     actual VIX from 1990 onwards. Trailing window -> no look-ahead.
-# --- Rebuild rv_spx on the clean SPX calendar (no merge-gap NAs) -----------
+# 4a. Extended VIX: realised vol computed on the clean SPX calendar
+#     (avoids merge-gap NAs), switching to actual VIX from 1990-01-02.
 spx_raw <- bbg_data$sp500[order(bbg_data$sp500$date), ]
 spx_raw$logret <- c(NA, diff(log(spx_raw$sp500)))
 spx_raw$rv_spx <- rollapplyr(
@@ -78,38 +79,38 @@ spx_raw$rv_spx <- rollapplyr(
   fill = NA
 )
 
-# --- Single vix_extended: realised vol pre-1990, actual VIX from 1990 ------
 ext <- merge(spx_raw[, c("date", "rv_spx")], bbg_data$vix, by = "date", all = TRUE)
 ext$vix_extended <- ifelse(ext$date < vix_start, ext$rv_spx, ext$vix)
-ext <- ext[, c("date", "vix_extended")]
+df <- merge(df, ext[, c("date", "vix_extended")], by = "date", all.x = TRUE)
 
-df$rv_spx       <- NULL
-df$vix_extended <- NULL
-df <- merge(df, ext, by = "date", all.x = TRUE)
-
-# --- Drop us10y, truncate to common start date -----------------------------
-df$us10y <- NULL
-df <- df[order(df$date), ]
-first_full <- min(df$date[complete.cases(df)])
-df <- df[df$date >= first_full, ]
-
-# 4c. Stock-bond correlation: rolling 63d corr of SPX returns and bond-return
-#     proxy (= -dY on the 10Y). Sign convention matches the textbook stock-bond
-#     correlation: positive means stocks and bonds move together.
-bond_ret_proxy <- -c(NA, diff(df$us10y))
-corr_window    <- 63
-
-pair <- cbind(spx_logret, bond_ret_proxy)
-df$stock_bond_corr <- rollapplyr(
-  pair, width = corr_window, by.column = FALSE,
+# 4b. Stock-bond correlation: rolling 63d corr(SPX returns, bond return proxy = -dY).
+#     Computed on inner-joined SPX + US10Y calendar for the same reason.
+sb <- merge(
+  bbg_data$sp500[order(bbg_data$sp500$date), ],
+  bbg_data$us10y[order(bbg_data$us10y$date), ],
+  by = "date"
+)
+sb$spx_logret     <- c(NA, diff(log(sb$sp500)))
+sb$bond_ret_proxy <- -c(NA, diff(sb$us10y))
+sb$stock_bond_corr <- rollapplyr(
+  cbind(sb$spx_logret, sb$bond_ret_proxy),
+  width = corr_window, by.column = FALSE,
   FUN = function(z) {
     ok <- complete.cases(z)
     if (sum(ok) >= 0.8 * corr_window) cor(z[ok, 1], z[ok, 2]) else NA_real_
   },
   fill = NA
 )
+df <- merge(df, sb[, c("date", "stock_bond_corr")], by = "date", all.x = TRUE)
 
-# --- 5. Export --------------------------------------------------------------
+# --- 5. Final cleanup -------------------------------------------------------
+
+df$us10y <- NULL
+df <- df[order(df$date), ]
+first_full <- min(df$date[complete.cases(df)])
+df <- df[df$date >= first_full, ]
+
+# --- 6. Export --------------------------------------------------------------
 
 out_path <- "market_data.csv"
 write.csv(df, out_path, row.names = FALSE)
