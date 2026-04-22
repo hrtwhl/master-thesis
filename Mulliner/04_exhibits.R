@@ -115,7 +115,6 @@ similarity_strip_plot <- function(dates, D, target_date, top_pct, mask_months,
                                   title, highlight_bands = NULL) {
   i <- which(dates == target_date)
   if (length(i) == 0) {
-    # pick the closest available month-end to target_date
     i <- which.min(abs(as.numeric(dates - target_date)))
     warning("Target date not exact; using ", dates[i])
   }
@@ -127,35 +126,63 @@ similarity_strip_plot <- function(dates, D, target_date, top_pct, mask_months,
     mutate(eligible = row_number() <= upper,
            masked   = row_number() >  upper & row_number() <= i)
 
+  # Restrict the plot to months where the distance is actually computable.
+  # Without this, ggplot auto-expands the x-axis back to the first macro
+  # date even though no line is drawn there.
+  plot_df <- df %>% filter(!is.na(d))
+  x_min <- min(plot_df$date); x_max <- max(plot_df$date)
+
   # selected similar = lowest 'top_pct' within eligible
   d_elig <- df$d[df$eligible]
   valid <- !is.na(d_elig)
   k <- max(1L, floor(sum(valid) * top_pct))
   thresh <- sort(d_elig[valid])[k]
-  df <- df %>%
-    mutate(is_similar = eligible & !is.na(d) & d <= thresh)
+  sim_dates <- df %>%
+    filter(eligible, !is.na(d), d <= thresh) %>%
+    pull(date)
 
-  masked_df <- df %>% filter(masked) %>% summarise(xmin = min(date), xmax = max(date))
+  # Build rectangle spans for similar months as month-wide bars. This avoids
+  # geom_col's reliance on the current y-range and always covers the full
+  # vertical extent of the panel.
+  sim_rects <- if (length(sim_dates) > 0) {
+    tibble(
+      xmin = sim_dates - 15,   # ~half a month
+      xmax = sim_dates + 15
+    )
+  } else tibble(xmin = as.Date(character()), xmax = as.Date(character()))
 
-  p <- ggplot(df, aes(date, d)) +
-    { if (nrow(masked_df) && is.finite(masked_df$xmin))
-        geom_rect(data = masked_df,
-                  aes(xmin = xmin, xmax = xmax,
-                      ymin = -Inf, ymax = Inf),
-                  inherit.aes = FALSE, fill = "grey80", alpha = 0.6) } +
-    { if (!is.null(highlight_bands))
-        geom_rect(data = highlight_bands,
-                  aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
-                  inherit.aes = FALSE,
-                  fill = pal$red, alpha = 0.10, colour = NA) } +
-    geom_col(data = df %>% filter(is_similar),
-             aes(y = max(d, na.rm = TRUE)),
-             fill = pal$green, alpha = 0.35, width = 28) +
+  masked_df <- df %>% filter(masked) %>%
+    summarise(xmin = min(date), xmax = max(date))
+
+  p <- ggplot(plot_df, aes(date, d))
+
+  if (nrow(masked_df) && is.finite(masked_df$xmin)) {
+    p <- p + geom_rect(data = masked_df,
+                       aes(xmin = xmin, xmax = xmax,
+                           ymin = -Inf, ymax = Inf),
+                       inherit.aes = FALSE,
+                       fill = "grey80", alpha = 0.6)
+  }
+  if (!is.null(highlight_bands)) {
+    p <- p + geom_rect(data = highlight_bands,
+                       aes(xmin = start, xmax = end,
+                           ymin = -Inf, ymax = Inf),
+                       inherit.aes = FALSE,
+                       fill = pal$red, alpha = 0.10, colour = NA)
+  }
+  if (nrow(sim_rects) > 0) {
+    p <- p + geom_rect(data = sim_rects,
+                       aes(xmin = xmin, xmax = xmax,
+                           ymin = -Inf, ymax = Inf),
+                       inherit.aes = FALSE,
+                       fill = pal$green, alpha = 0.30, colour = NA)
+  }
+
+  p +
     geom_line(colour = pal$blue, linewidth = 0.5, linetype = "dashed") +
+    scale_x_date(limits = c(x_min, x_max), expand = expansion(mult = 0.01)) +
     labs(title = title, x = NULL, y = "Global score (distance)") +
     theme_regimes()
-
-  p
 }
 
 exhibit_6 <- function(distance_matrix, mask_months, top_pct) {
@@ -225,6 +252,7 @@ exhibit_9 <- function(distance_matrix, lookbacks) {
     mutate(lookback = "Mean")
 
   plot_df <- bind_rows(df, mean_tbl) %>%
+    filter(is.finite(ewma)) %>%   # drop pre-data rows so x-axis doesn't extend
     mutate(lookback = factor(lookback,
               levels = c(paste0(lookbacks / 12, "-year"), "Mean")))
 
@@ -234,6 +262,7 @@ exhibit_9 <- function(distance_matrix, lookbacks) {
                            guide = "none") +
     scale_colour_manual(values = c(pal$blue, pal$light_blue,
                                    pal$green, pal$grey, "black")) +
+    scale_x_date(expand = expansion(mult = 0.01)) +
     labs(title = "Exhibit 9. EWMA of global score across lookbacks",
          x = NULL, y = "EWMA of global score", colour = NULL) +
     theme_regimes()
@@ -279,26 +308,28 @@ exhibit_1 <- function(diff_vt) {
 
 cum_pct <- function(r) cumsum(ifelse(is.na(r), 0, r)) * 100
 
-exhibit_10 <- function(strategies) {
-  qs <- strategies$per_bucket %>% filter(is.finite(avg))
-  lo <- strategies$long_only  %>% filter(is.finite(avg))
+# Internal: renders one Exhibit-10 variant (unlevered OR vol-targeted) given
+# the relevant per-bucket, long-only, and diff inputs.
+exhibit_10_one <- function(per_bucket, long_only, diff_default,
+                           suffix, subtitle_tail) {
+  qs <- per_bucket %>% filter(is.finite(avg))
+  lo <- long_only  %>% filter(is.finite(avg))
 
-  # Only include dates where at least Q1 is available
   start_date <- qs %>% filter(quintile == "Q1") %>%
     summarise(d = min(date)) %>% pull(d)
   qs <- qs %>% filter(date >= start_date)
   lo <- lo %>% filter(date >= start_date)
 
-  # Cumulative sum (the paper's y-axis is cumulative return in percent)
   qs <- qs %>% group_by(quintile) %>% mutate(cum = cum_pct(avg)) %>% ungroup()
   lo <- lo %>% mutate(cum = cum_pct(avg))
 
   stats_q <- qs %>%
     group_by(quintile) %>%
     summarise(SR = sharpe(avg),
-              corr = cor(avg, lo$avg, use = "pairwise"),
+              corr = cor(avg, lo$avg[match(date, lo$date)], use = "pairwise"),
               .groups = "drop")
-  save_table(stats_q, "exhibit_10_quintile_stats")
+  save_table(stats_q, paste0("exhibit_10_quintile_stats", suffix))
+  cat("  [", suffix, "] quintile stats:\n", sep = "")
   print(stats_q)
 
   p1 <- ggplot() +
@@ -306,36 +337,55 @@ exhibit_10 <- function(strategies) {
     geom_line(data = lo, aes(date, cum), colour = "black",
               linetype = "dashed", linewidth = 0.6) +
     labs(title = "Exhibit 10 (left). Similarity quintiles vs long-only",
-         subtitle = "Quintile 1 = most similar, Quintile 5 = least similar. Black dashed: LO.",
+         subtitle = paste0("Quintile 1 = most similar, Quintile 5 = least similar. ",
+                           "Black dashed: LO. ", subtitle_tail),
          x = NULL, y = "Cumulative return (%)", colour = NULL) +
     theme_regimes()
 
-  diff <- strategies$diff_default %>% filter(is.finite(diff)) %>%
+  diff_df <- diff_default %>% filter(is.finite(diff)) %>%
     mutate(cum = cum_pct(diff))
-  sr_diff <- sharpe(strategies$diff_default$diff)
-  corr_diff <- cor(strategies$diff_default$diff,
-                   strategies$long_only$avg,
+  sr_diff <- sharpe(diff_default$diff)
+  corr_diff <- cor(diff_default$diff,
+                   long_only$avg[match(diff_default$date, long_only$date)],
                    use = "pairwise")
 
-  p2 <- ggplot(diff, aes(date, cum)) +
+  p2 <- ggplot(diff_df, aes(date, cum)) +
     geom_line(colour = pal$blue, linewidth = 0.7) +
     labs(title = sprintf("Exhibit 10 (right). Q1 minus Q5 (SR = %.2f, corr LO = %.2f)",
                          sr_diff, corr_diff),
+         subtitle = subtitle_tail,
          x = NULL, y = "Cumulative return (%)") +
     theme_regimes()
 
-  save_plot(p1 / p2, "exhibit_10_quintiles_and_diff", width = 11, height = 9)
+  save_plot(p1 / p2, paste0("exhibit_10_quintiles_and_diff", suffix),
+            width = 11, height = 9)
+}
+
+exhibit_10 <- function(strategies) {
+  # Unlevered (clean statistical comparison)
+  exhibit_10_one(strategies$per_bucket,
+                 strategies$long_only,
+                 strategies$diff_default,
+                 suffix        = "",
+                 subtitle_tail = "Unlevered (raw factor returns).")
+
+  # Vol-targeted at 15% ann (paper visual scale)
+  exhibit_10_one(strategies$per_bucket_vt,
+                 strategies$long_only_vt,
+                 strategies$diff_default_vt,
+                 suffix        = "_voltgt",
+                 subtitle_tail = "Each series scaled to 15% annualised vol (paper convention).")
 }
 
 # -------------------- Exhibit 11: drawdowns --------------------------------
 
-exhibit_11 <- function(strategies) {
-  lo_dd   <- tibble(date = strategies$long_only$date,
-                    dd   = drawdown(strategies$long_only$avg),
+exhibit_11_one <- function(long_only, diff_default, suffix, subtitle_tail) {
+  lo_dd   <- tibble(date = long_only$date,
+                    dd   = drawdown(long_only$avg),
                     what = "Long-only factor model")
 
-  diff_dd <- tibble(date = strategies$diff_default$date,
-                    dd   = drawdown(strategies$diff_default$diff),
+  diff_dd <- tibble(date = diff_default$date,
+                    dd   = drawdown(diff_default$diff),
                     what = "Similarity model (Q1 - Q5)")
 
   df <- bind_rows(lo_dd, diff_dd) %>% filter(is.finite(dd))
@@ -346,10 +396,22 @@ exhibit_11 <- function(strategies) {
                                    "Similarity model (Q1 - Q5)"    = pal$blue),
                         name = NULL) +
     labs(title = "Exhibit 11. Drawdown profile",
+         subtitle = subtitle_tail,
          x = NULL, y = "Drawdown (%)") +
     theme_regimes()
 
-  save_plot(p, "exhibit_11_drawdowns", width = 10, height = 4.5)
+  save_plot(p, paste0("exhibit_11_drawdowns", suffix), width = 10, height = 4.5)
+}
+
+exhibit_11 <- function(strategies) {
+  exhibit_11_one(strategies$long_only,
+                 strategies$diff_default,
+                 suffix        = "",
+                 subtitle_tail = "Unlevered (raw factor returns).")
+  exhibit_11_one(strategies$long_only_vt,
+                 strategies$diff_default_vt,
+                 suffix        = "_voltgt",
+                 subtitle_tail = "Each series scaled to 15% annualised vol (paper scale).")
 }
 
 # -------------------- Exhibit 12: quantile robustness ----------------------
@@ -408,8 +470,8 @@ exhibit_13 <- function(strategies) {
 
 # -------------------- Appendix A1 & A2: individual factors -----------------
 
-exhibit_a <- function(strategies) {
-  per_fac <- strategies$per_factor %>%
+exhibit_a_one <- function(per_factor_data, suffix, subtitle_tail) {
+  per_fac <- per_factor_data %>%
     filter(is.finite(r)) %>%
     group_by(factor, quintile) %>%
     arrange(date) %>%
@@ -421,9 +483,11 @@ exhibit_a <- function(strategies) {
     geom_line(linewidth = 0.5) +
     facet_wrap(~ factor, scales = "free_y") +
     labs(title = "Exhibit A1. Similarity quintiles per factor",
+         subtitle = subtitle_tail,
          x = NULL, y = "Cumulative return (%)", colour = NULL) +
     theme_regimes()
-  save_plot(p_a1, "exhibit_A1_per_factor_quintiles", width = 11, height = 7)
+  save_plot(p_a1, paste0("exhibit_A1_per_factor_quintiles", suffix),
+            width = 11, height = 7)
 
   # A2: Q1 - Q5 per factor
   diff_fac <- per_fac %>%
@@ -437,16 +501,28 @@ exhibit_a <- function(strategies) {
 
   stats_a2 <- diff_fac %>% group_by(factor) %>%
     summarise(SR = sharpe(diff), .groups = "drop")
-  save_table(stats_a2, "exhibit_A2_per_factor_stats")
+  save_table(stats_a2, paste0("exhibit_A2_per_factor_stats", suffix))
+  cat("  [", suffix, "] per-factor Q1-Q5 Sharpes:\n", sep = "")
   print(stats_a2)
 
   p_a2 <- ggplot(diff_fac, aes(date, cum)) +
     geom_line(colour = pal$blue, linewidth = 0.55) +
     facet_wrap(~ factor, scales = "free_y") +
     labs(title = "Exhibit A2. Q1 minus Q5 per factor",
+         subtitle = paste0(subtitle_tail, " Horizontal stretches are months where Q1 and Q5 signals agree for that factor (zero contribution to the diff)."),
          x = NULL, y = "Cumulative return (%)") +
     theme_regimes()
-  save_plot(p_a2, "exhibit_A2_per_factor_diff", width = 11, height = 7)
+  save_plot(p_a2, paste0("exhibit_A2_per_factor_diff", suffix),
+            width = 11, height = 7)
+}
+
+exhibit_a <- function(strategies) {
+  exhibit_a_one(strategies$per_factor,
+                suffix        = "",
+                subtitle_tail = "Unlevered (raw factor returns).")
+  exhibit_a_one(strategies$per_factor_vt,
+                suffix        = "_voltgt",
+                subtitle_tail = "Each factor-quintile scaled to 15% annualised vol (paper scale).")
 }
 
 # -------------------- Orchestrator -----------------------------------------

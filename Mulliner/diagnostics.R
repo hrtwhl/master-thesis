@@ -130,6 +130,9 @@ run_diagnostics <- function(state, dist_mat, factors, strat, cfg) {
   # alpha regressions
   alpha_diagnostics(strat, factors, cfg)
 
+  # long-only construction diagnostics (vol-profile + paper's likely recipe)
+  lo_construction_diagnostics(strat, factors, cfg)
+
   invisible(list(stats = stats, top = top, sig_q1 = sig_q1, sig_q5 = sig_q5))
 }
 
@@ -207,4 +210,126 @@ alpha_diagnostics <- function(strat, factors, cfg) {
           "Q5 only (long dissimilarity)")
 
   invisible(NULL)
+}
+
+
+# ---------------------------------------------------------------------------
+# LO construction diagnostics. Our LO is an equally-weighted average of the
+# six Fama-French factor returns. In the paper, LO has Sharpe ~1.0 and
+# drawdowns reaching ~50% in 2009 and 2020. Those numbers are inconsistent
+# with a naive equal-weight combination, which typically has Sharpe 0.6-0.8
+# and drawdowns of 15-25%. This diagnostic tests the hypothesis that the
+# paper's LO is (a) inverse-vol weighted across factors and (b) levered to
+# a 15% portfolio vol target - the two standard ingredients that would
+# reproduce the paper's scale.
+#
+# We compute four LO variants:
+#   1. Equal-weighted (our current default)
+#   2. Inverse-vol weighted
+#   3. Equal-weighted + 15% portfolio vol target
+#   4. Inverse-vol weighted + 15% portfolio vol target  <- paper-likely recipe
+# and report Sharpe, annualised vol, max drawdown, and the two big
+# drawdowns (2008-2009 and 2020) for each.
+# ---------------------------------------------------------------------------
+lo_construction_diagnostics <- function(strat, factors, cfg) {
+  cat("\n================ DIAGNOSTIC 8: long-only construction =================\n")
+  cat("Our LO vs candidate paper recipes. The paper's LO has Sharpe ~1.0 and\n")
+  cat("max drawdowns near -50% in 2009 and 2020, which are inconsistent with\n")
+  cat("an unlevered equal-weight combination. Test two common add-ons:\n")
+  cat("  - inverse-vol factor weights (favours low-vol high-SR factors)\n")
+  cat("  - 15% portfolio vol target (rolling leverage)\n\n")
+
+  fc <- c("Market", "Size", "Value", "Profitability",
+          "Investment", "Momentum")
+  R  <- as.matrix(factors[, fc])
+  d  <- factors$date
+  n  <- nrow(R)
+
+  # --- construction 1: equal weights, no leverage ---------------------------
+  w_eq <- rep(1 / length(fc), length(fc))
+  r_eq <- as.numeric(R %*% w_eq)
+
+  # --- construction 2: inverse-vol weights, no leverage ---------------------
+  # Use trailing 36-month realised vol per factor, computed rolling so the
+  # weights are ex-ante. Normalise so weights sum to 1 each month.
+  roll_sd_fact <- apply(R, 2, function(col) {
+    slider::slide_dbl(col, ~ sd(.x, na.rm = TRUE),
+                      .before = 36, .after = -1, .complete = FALSE)
+  })
+  inv_vol <- 1 / roll_sd_fact
+  inv_vol[!is.finite(inv_vol)] <- NA
+  W_iv    <- inv_vol / rowSums(inv_vol, na.rm = TRUE)
+  r_iv    <- rowSums(R * W_iv)
+
+  # --- helper: apply 15% portfolio vol target (ex-ante) ---------------------
+  apply_vol_target <- function(r, target = 0.15, win = 36) {
+    rv <- slider::slide_dbl(r, ~ sd(.x, na.rm = TRUE),
+                            .before = win, .after = -1, .complete = FALSE)
+    scale <- (target / sqrt(12)) / rv
+    scale[!is.finite(scale)] <- NA
+    r * scale
+  }
+
+  # --- construction 3 and 4: with 15% vol target ----------------------------
+  r_eq_vt <- apply_vol_target(r_eq)
+  r_iv_vt <- apply_vol_target(r_iv)
+
+  # --- summary table --------------------------------------------------------
+  # Max relative drawdown on a compounded equity curve. Output in [-1, 0].
+  mdd <- function(r) {
+    r <- ifelse(is.na(r), 0, r)
+    eq <- cumprod(1 + r)
+    dd <- eq / cummax(eq) - 1
+    dd[!is.finite(dd)] <- -1
+    min(dd)
+  }
+
+  # Relative drawdown in a window around a target date.
+  dd_at <- function(r, dates, target_date) {
+    r <- ifelse(is.na(r), 0, r)
+    eq <- cumprod(1 + r)
+    dd <- eq / cummax(eq) - 1
+    dd[!is.finite(dd)] <- -1
+    idx <- which(dates >= as.Date(target_date))[1]
+    if (is.na(idx)) return(NA)
+    lo <- max(1, idx - 3); hi <- min(length(dd), idx + 6)
+    min(dd[lo:hi])
+  }
+
+  summarise_variant <- function(r, label) {
+    r_valid <- r[is.finite(r)]
+    if (length(r_valid) < 24) return(NULL)
+    tibble(
+      variant     = label,
+      n_months    = length(r_valid),
+      ann_ret_pct = mean(r_valid) * 12 * 100,
+      ann_vol_pct = sd(r_valid) * sqrt(12) * 100,
+      sharpe      = mean(r_valid) / sd(r_valid) * sqrt(12),
+      max_dd_pct  = mdd(r) * 100,
+      dd_2009_pct = dd_at(r, d, "2009-03-01") * 100,
+      dd_2020_pct = dd_at(r, d, "2020-04-01") * 100
+    )
+  }
+
+  tbl <- bind_rows(
+    summarise_variant(r_eq,    "1. equal-weight (ours)"),
+    summarise_variant(r_iv,    "2. inverse-vol weight"),
+    summarise_variant(r_eq_vt, "3. equal-wt + 15% vol target"),
+    summarise_variant(r_iv_vt, "4. inverse-vol + 15% vol target (paper-likely)")
+  )
+
+  cat("Paper (for reference): LO Sharpe ~ 1.00, max drawdowns near -50%\n")
+  cat("in both 2009 and 2020 per Exhibit 11.\n\n")
+  print(tbl %>% mutate(across(where(is.numeric), ~ round(.x, 2))))
+
+  cat("\nInterpretation guide:\n")
+  cat("  - If variant 1 (our current LO) has dd ~ -10 to -15% in 2009/2020\n")
+  cat("    and variant 4 has dd near -50%, the paper is using recipe 4.\n")
+  cat("  - If variant 2 (inverse-vol only) is closer to -50%, leverage is\n")
+  cat("    the sole driver and we should inverse-vol weight without further\n")
+  cat("    scaling.\n")
+  cat("  - Either way this does NOT change the alpha regression from\n")
+  cat("    Diagnostic 7, since Q1-Q5 Sharpe is invariant to uniform scaling.\n")
+
+  invisible(tbl)
 }

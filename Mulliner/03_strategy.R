@@ -71,14 +71,50 @@ equal_weight <- function(returns_tbl, factor_names) {
 
 #' Vol-target a monthly return series to `target_ann` annual vol, using a
 #' trailing window of realised vol (ex-ante).
+#' Accepts either a tibble with a `r` / `avg` / `diff` column (auto-detected)
+#' or a raw numeric vector. Returns a tibble with date, r (raw), r_vt
+#' (vol-targeted), and scale (the leverage applied at each month).
 vol_target <- function(r_tbl, target_ann = 0.15, window = 36) {
-  r <- r_tbl$avg
+  if (is.numeric(r_tbl)) {
+    r <- r_tbl
+    d <- NULL
+  } else {
+    # auto-detect the return column
+    rc <- intersect(c("r", "avg", "diff", "ret"), names(r_tbl))[1]
+    if (is.na(rc)) stop("vol_target: no return column found in tibble")
+    r <- r_tbl[[rc]]
+    d <- r_tbl$date
+  }
   rv <- slider::slide_dbl(r, ~ sd(.x, na.rm = TRUE),
                           .before = window, .after = -1,
                           .complete = FALSE)
   scale <- (target_ann / sqrt(12)) / rv
   scale[!is.finite(scale)] <- NA
-  tibble(date = r_tbl$date, r = r, r_vt = r * scale, scale = scale)
+  if (is.null(d)) {
+    tibble(r = r, r_vt = r * scale, scale = scale)
+  } else {
+    tibble(date = d, r = r, r_vt = r * scale, scale = scale)
+  }
+}
+
+#' Apply vol targeting to a long-format per-quintile tibble with columns
+#' (date, avg, quintile). Each quintile is scaled using its own trailing
+#' realised vol, so all quintiles end up at ~target_ann vol individually.
+vol_target_by_group <- function(tbl, group_col, ret_col = "avg",
+                                target_ann = 0.15, window = 36) {
+  tbl %>%
+    group_by(.data[[group_col]]) %>%
+    arrange(date, .by_group = TRUE) %>%
+    mutate(
+      rv    = slider::slide_dbl(.data[[ret_col]], ~ sd(.x, na.rm = TRUE),
+                                .before = window, .after = -1,
+                                .complete = FALSE),
+      scale = (target_ann / sqrt(12)) / rv,
+      scale = if_else(is.finite(scale), scale, NA_real_),
+      avg_vt = .data[[ret_col]] * scale
+    ) %>%
+    ungroup() %>%
+    select(-rv)
 }
 
 #' Run all strategies (quintiles, difference portfolio, robustness sweeps).
@@ -121,10 +157,25 @@ run_strategies <- function(distance_matrix, factor_returns, mask_months,
     mutate(diff = .data[["Q1"]] - .data[[paste0("Q", q_default)]]) %>%
     select(date, diff)
 
-  # Vol-targeted version of the difference portfolio (for Exhibit 1)
-  diff_vt <- vol_target(diff_qs %>% rename(avg = diff),
-                        target_ann = CFG$vol_target,
-                        window     = CFG$vol_window)
+  # ---- Vol-targeted variants (paper convention, ~15% ann vol) -------------
+  # Apply a 15% portfolio vol target to each series individually using
+  # trailing 36m realised vol. This matches the paper's Exhibit-11 scale
+  # (LO reaches ~50% drawdowns only after ~3-4x leverage).
+  ew_q_vt <- vol_target_by_group(ew_q, "quintile",
+                                 target_ann = CFG$vol_target,
+                                 window     = CFG$vol_window) %>%
+    select(date, quintile, avg_vt) %>%
+    rename(avg = avg_vt)
+
+  lo_vt_full <- vol_target(lo %>% rename(r = avg),
+                           target_ann = CFG$vol_target,
+                           window     = CFG$vol_window)
+  lo_vt <- tibble(date = lo_vt_full$date, avg = lo_vt_full$r_vt)
+
+  diff_vt_full <- vol_target(diff_qs %>% rename(r = diff),
+                             target_ann = CFG$vol_target,
+                             window     = CFG$vol_window)
+  diff_vt <- tibble(date = diff_vt_full$date, diff = diff_vt_full$r_vt)
 
   # ---- Robustness: different quantile choices -----------------------------
   rb_quantile <- map_dfr(q_robust, function(q) {
@@ -171,14 +222,33 @@ run_strategies <- function(distance_matrix, factor_returns, mask_months,
       mutate(quintile = paste0("Q", q))
   })
 
+  # Vol-target the per-factor series too (grouped by factor x quintile).
+  per_factor_vt <- per_factor %>%
+    group_by(factor, quintile) %>%
+    arrange(date, .by_group = TRUE) %>%
+    mutate(
+      rv    = slider::slide_dbl(r, ~ sd(.x, na.rm = TRUE),
+                                .before = CFG$vol_window, .after = -1,
+                                .complete = FALSE),
+      scale = (CFG$vol_target / sqrt(12)) / rv,
+      scale = if_else(is.finite(scale), scale, NA_real_),
+      r     = r * scale
+    ) %>%
+    ungroup() %>%
+    select(date, factor, r, quintile)
+
   list(
-    factor_names  = factor_names,
-    per_bucket    = ew_q,                   # monthly returns per quintile
-    diff_default  = diff_qs,                # Q1 - Q5
-    diff_vol_targeted = diff_vt,            # for Exhibit 1
-    long_only     = lo,
-    robust_qtl    = rb_quantile,
-    robust_lkback = rb_lookback,
-    per_factor    = per_factor
+    factor_names      = factor_names,
+    per_bucket        = ew_q,                   # monthly returns per quintile (unlevered)
+    per_bucket_vt     = ew_q_vt,                # vol-targeted version
+    diff_default      = diff_qs,                # Q1 - Q5 (unlevered)
+    diff_default_vt   = diff_vt,                # Q1 - Q5 (vol-targeted)
+    diff_vol_targeted = diff_vt_full,           # kept for Exhibit 1 (legacy interface)
+    long_only         = lo,                     # unlevered
+    long_only_vt      = lo_vt,                  # vol-targeted (paper scale)
+    robust_qtl        = rb_quantile,
+    robust_lkback     = rb_lookback,
+    per_factor        = per_factor,             # unlevered per-factor x quintile
+    per_factor_vt     = per_factor_vt           # vol-targeted
   )
 }

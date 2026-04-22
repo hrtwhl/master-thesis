@@ -27,8 +27,29 @@ sharpe <- function(r) {
   (mean(r) / sd(r)) * sqrt(12)
 }
 
-#' Drawdown series from a return path
+#' Relative drawdown on a compounded equity curve.
+#' Input: monthly simple returns (e.g. 0.02 for +2%). NAs are treated as 0.
+#' Output: a numeric vector in [-1, 0] where -0.30 means "down 30% from the
+#' equity-curve high-water mark." This is the convention the paper uses
+#' (Exhibit 11 reads -50% as "capital dropped 50% from peak").
+#'
+#' For guardrails, if compounded equity goes non-positive (extremely negative
+#' returns - shouldn't happen with our vol-targeted monthly series), we floor
+#' at -1 rather than let NaN propagate.
 drawdown <- function(r) {
+  r <- ifelse(is.na(r), 0, r)
+  eq <- cumprod(1 + r)
+  peak <- cummax(eq)
+  dd <- eq / peak - 1
+  dd[!is.finite(dd)] <- -1
+  dd
+}
+
+#' Absolute (P&L-sum) drawdown - the difference between cumulative P&L and
+#' its running maximum. Useful for long-short strategies expressed as
+#' cumulative return in percentage points, but NOT the conventional
+#' "drawdown" for an equity curve.
+drawdown_abs <- function(r) {
   eq <- cumsum(ifelse(is.na(r), 0, r))
   eq - cummax(eq)
 }

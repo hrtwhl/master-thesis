@@ -18,7 +18,7 @@ suppressPackageStartupMessages({
 
 CFG <- list(
   paths = list(
-    macro_csv   = "final.csv",
+    macro_csv   = "data_final.csv",
     ff5_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_CSV.zip",
     mom_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip",
     output_dir  = "Mulliner/output"
@@ -29,8 +29,8 @@ CFG <- list(
 
   # Z-score construction
   change_horizon  = 12L,    # 12-month change
-  #rolling_window  = 120L,   # 10 years of monthly 12m-diffs for rolling std
-  rolling_window  = 60L,   # 5 years of monthly 12m-diffs for rolling std
+  rolling_window  = 120L,   # 10 years of monthly 12m-diffs for rolling std
+  #rolling_window  = 60L,   # 5 years of monthly 12m-diffs for rolling std
   winsorize_at    = 3,
 
   # Similarity
@@ -60,7 +60,7 @@ CFG <- list(
     "oil",             "Oil",             "log",
     "copper",          "Copper",          "log",
     "us3m",            "Monetary policy", "level",
-    "vix_extended",    "Volatility",      "log",
+    "vix",    "Volatility",      "log",
     "stock_bond_corr", "Stock-bond",      "level"
   )
 )
@@ -114,7 +114,7 @@ make_all_exhibits(
 )
 
 
-source("files/diagnostics.R")
+source("Mulliner/diagnostics.R")
 run_diagnostics(state, dist_mat, factors, strat, CFG)
 
 message("\nDone. Output written to '", CFG$paths$output_dir, "'.")
