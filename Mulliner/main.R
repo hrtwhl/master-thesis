@@ -18,14 +18,14 @@ suppressPackageStartupMessages({
 
 CFG <- list(
   paths = list(
-    macro_csv   = "data/data_final_v2.csv",
+    macro_csv   = "data_final.csv",
     ff5_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_CSV.zip",
     mom_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip",
-    output_dir  = "output"
+    output_dir  = "Mulliner/output"
   ),
 
   # End of sample (binding constraint from the user)
-  sample_end = as.Date("2025-12-31"),
+  sample_end = as.Date("2024-12-31"),
 
   # Z-score construction
   change_horizon  = 12L,    # 12-month change
@@ -68,11 +68,11 @@ dir.create(CFG$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
 
 # ---- Pipeline -------------------------------------------------------------
 
-source("R/utils.R")
-source("R/01_data.R")
-source("R/02_similarity.R")
-source("R/03_strategy.R")
-source("R/04_exhibits.R")
+source("Mulliner/utils.R")
+source("Mulliner/01_data.R")
+source("Mulliner/02_similarity.R")
+source("Mulliner/03_strategy.R")
+source("Mulliner/04_exhibits.R")
 
 message("\n[1/5] Loading macro data and building state variables ...")
 macro <- load_macro(CFG$paths$macro_csv, CFG$sample_end)
@@ -113,3 +113,7 @@ make_all_exhibits(
 )
 
 message("\nDone. Output written to '", CFG$paths$output_dir, "'.")
+
+
+source("Mulliner/diagnostics.R")
+run_diagnostics(state, dist_mat, factors, strat, CFG)
