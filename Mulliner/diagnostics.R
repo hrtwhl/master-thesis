@@ -24,22 +24,34 @@ run_diagnostics <- function(state, dist_mat, factors, strat, cfg) {
       q01     = quantile(z, 0.01, na.rm = TRUE),
       q99     = quantile(z, 0.99, na.rm = TRUE),
       .groups = "drop"
-    ) %>%
-    arrange(match(var, cfg$variables$var))
+    )
+  if (!is.null(cfg$variables)) {
+    stats <- stats %>% arrange(match(var, cfg$variables$var))
+  }
   print(stats %>% mutate(across(where(is.numeric), ~ round(.x, 3))))
 
   cat("\n================ DIAGNOSTIC 2: distance-matrix influence =================\n")
   cat("Contribution of each variable to the *average* squared distance.\n")
   cat("If one variable is > ~25% the rest are under-weighted in the metric.\n\n")
-  X <- as.matrix(z[, cfg$variables$var])
+  # Read variable names from the transformed data (works for both 7-variable
+  # baseline and FRED-MD PCA factors).
+  var_cols <- setdiff(names(z), "date")
+  X <- as.matrix(z[, var_cols])
   # For each variable v, avg over all i != j of (X[i,v] - X[j,v])^2
-  contrib <- sapply(seq_along(cfg$variables$var), function(k) {
-    v <- X[, k]
+  contrib <- sapply(var_cols, function(v_name) {
+    v <- X[, v_name]
     v <- v[!is.na(v)]
     # mean squared pairwise difference = 2 * var(v)
-    2 * var(v)
+    as.numeric(2 * var(v))
   })
-  names(contrib) <- cfg$variables$label
+  # Use cfg$variables$label if available (baseline) else var_cols (FRED-MD)
+  display_names <- if (!is.null(cfg$variables) &&
+                       all(var_cols %in% cfg$variables$var)) {
+    cfg$variables$label[match(var_cols, cfg$variables$var)]
+  } else {
+    var_cols
+  }
+  names(contrib) <- display_names
   share <- contrib / sum(contrib)
   print(tibble(variable = names(share),
                squared_contribution = round(contrib, 3),
@@ -107,14 +119,27 @@ run_diagnostics <- function(state, dist_mat, factors, strat, cfg) {
 
   cat("\n================ DIAGNOSTIC 5: date alignment ===========================\n")
   cat("First and last overlap of macro dates and factor dates, and NA counts.\n\n")
-  d_state  <- range(state$monthly$date)
+  # Pick the best available "monthly" data source. Baseline pipeline stores
+  # raw monthly macro data under state$monthly. FRED-MD doesn't have that
+  # (the inputs are PCA factor scores), so fall back to the transformed
+  # tibble's date column.
+  monthly_dates <- if (!is.null(state$monthly)) {
+    state$monthly$date
+  } else if (!is.null(state$transformed_winsorized)) {
+    state$transformed_winsorized$date
+  } else {
+    stop("state has no monthly or transformed_winsorized field")
+  }
+
+  d_state  <- range(monthly_dates)
   d_factor <- range(factors$date)
-  d_common <- intersect(as.character(state$monthly$date), as.character(factors$date))
+  d_common <- intersect(as.character(monthly_dates),
+                        as.character(factors$date))
   cat("  macro monthly range :", format(d_state[1]), "to", format(d_state[2]), "\n")
   cat("  factor monthly range:", format(d_factor[1]), "to", format(d_factor[2]), "\n")
   cat("  common month-ends   :", length(d_common), "\n")
   # join quality
-  fr_full <- tibble(date = state$monthly$date) %>% left_join(factors, by = "date")
+  fr_full <- tibble(date = monthly_dates) %>% left_join(factors, by = "date")
   na_pct <- fr_full %>%
     summarise(across(-date, ~ mean(is.na(.x)))) %>%
     pivot_longer(everything(), names_to = "factor", values_to = "pct_NA")

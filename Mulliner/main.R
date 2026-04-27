@@ -18,10 +18,10 @@ suppressPackageStartupMessages({
 
 CFG <- list(
   paths = list(
-    macro_csv   = "data_final.csv",
+    macro_csv   = "data/data_final_v2.csv",
     ff5_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_CSV.zip",
     mom_url     = "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_CSV.zip",
-    output_dir  = "Mulliner/output"
+    output_dir  = "output"
   ),
 
   # End of sample (binding constraint from the user)
@@ -30,7 +30,6 @@ CFG <- list(
   # Z-score construction
   change_horizon  = 12L,    # 12-month change
   rolling_window  = 120L,   # 10 years of monthly 12m-diffs for rolling std
-  #rolling_window  = 60L,   # 5 years of monthly 12m-diffs for rolling std
   winsorize_at    = 3,
 
   # Similarity
@@ -40,7 +39,7 @@ CFG <- list(
   # Strategy
   quantile_default = 5L,           # quintiles
   quantile_robust  = c(2, 3, 4, 5, 10, 20),
-  lookback_robust  = c(12L, 36L, 60L, 120L),  # 1y, 3y, 5y and 10y z-score lookbacks
+  lookback_robust  = c(12L, 36L, 60L),  # 1y, 3y, 5y z-score lookbacks
   vol_target       = 0.15,
   vol_window       = 36L,          # realised-vol window for vol targeting
 
@@ -60,7 +59,7 @@ CFG <- list(
     "oil",             "Oil",             "log",
     "copper",          "Copper",          "log",
     "us3m",            "Monetary policy", "level",
-    "vix",    "Volatility",      "log",
+    "vix",             "Volatility",      "log",
     "stock_bond_corr", "Stock-bond",      "level"
   )
 )
@@ -69,11 +68,11 @@ dir.create(CFG$paths$output_dir, showWarnings = FALSE, recursive = TRUE)
 
 # ---- Pipeline -------------------------------------------------------------
 
-source("Mulliner/utils.R")
-source("Mulliner/01_data.R")
-source("Mulliner/02_similarity.R")
-source("Mulliner/03_strategy.R")
-source("Mulliner/04_exhibits.R")
+source("R/utils.R")
+source("R/01_data.R")
+source("R/02_similarity.R")
+source("R/03_strategy.R")
+source("R/04_exhibits.R")
 
 message("\n[1/5] Loading macro data and building state variables ...")
 macro <- load_macro(CFG$paths$macro_csv, CFG$sample_end)
@@ -112,9 +111,5 @@ make_all_exhibits(
   strategies    = strat,
   cfg           = CFG
 )
-
-
-source("Mulliner/diagnostics.R")
-run_diagnostics(state, dist_mat, factors, strat, CFG)
 
 message("\nDone. Output written to '", CFG$paths$output_dir, "'.")

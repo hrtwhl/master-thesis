@@ -329,7 +329,7 @@ exhibit_10_one <- function(per_bucket, long_only, diff_default,
               corr = cor(avg, lo$avg[match(date, lo$date)], use = "pairwise"),
               .groups = "drop")
   save_table(stats_q, paste0("exhibit_10_quintile_stats", suffix))
-  cat("  [", suffix, "] quintile stats:\n", sep = "")
+  cat("  quintile stats:\n")
   print(stats_q)
 
   p1 <- ggplot() +
@@ -362,18 +362,11 @@ exhibit_10_one <- function(per_bucket, long_only, diff_default,
 }
 
 exhibit_10 <- function(strategies) {
-  # Unlevered (clean statistical comparison)
-  exhibit_10_one(strategies$per_bucket,
-                 strategies$long_only,
-                 strategies$diff_default,
-                 suffix        = "",
-                 subtitle_tail = "Unlevered (raw factor returns).")
-
-  # Vol-targeted at 15% ann (paper visual scale)
+  # Vol-targeted at 15% ann (paper convention)
   exhibit_10_one(strategies$per_bucket_vt,
                  strategies$long_only_vt,
                  strategies$diff_default_vt,
-                 suffix        = "_voltgt",
+                 suffix        = "",
                  subtitle_tail = "Each series scaled to 15% annualised vol (paper convention).")
 }
 
@@ -404,23 +397,29 @@ exhibit_11_one <- function(long_only, diff_default, suffix, subtitle_tail) {
 }
 
 exhibit_11 <- function(strategies) {
-  exhibit_11_one(strategies$long_only,
-                 strategies$diff_default,
-                 suffix        = "",
-                 subtitle_tail = "Unlevered (raw factor returns).")
   exhibit_11_one(strategies$long_only_vt,
                  strategies$diff_default_vt,
-                 suffix        = "_voltgt",
-                 subtitle_tail = "Each series scaled to 15% annualised vol (paper scale).")
+                 suffix        = "",
+                 subtitle_tail = "Each series scaled to 15% annualised vol (paper convention).")
 }
 
 # -------------------- Exhibit 12: quantile robustness ----------------------
 
 exhibit_12 <- function(strategies) {
+  # Vol-target the diff series per quantile-count group to 15% ann
   rb <- strategies$robust_qtl %>%
     filter(is.finite(diff)) %>%
     group_by(q) %>%
-    arrange(date) %>%
+    arrange(date, .by_group = TRUE) %>%
+    mutate(
+      rv    = slider::slide_dbl(diff, ~ sd(.x, na.rm = TRUE),
+                                .before = CFG$vol_window, .after = -1,
+                                .complete = FALSE),
+      scale = (CFG$vol_target / sqrt(12)) / rv,
+      scale = if_else(is.finite(scale), scale, NA_real_),
+      diff  = diff * scale
+    ) %>%
+    filter(is.finite(diff)) %>%
     mutate(cum = cum_pct(diff)) %>%
     ungroup()
 
@@ -435,6 +434,7 @@ exhibit_12 <- function(strategies) {
   p <- ggplot(rb, aes(date, cum, colour = label)) +
     geom_line(linewidth = 0.55) +
     labs(title = "Exhibit 12. Robustness to the number of quantiles",
+         subtitle = "Each series scaled to 15% annualised vol (paper convention).",
          x = NULL, y = "Cumulative return (%)", colour = NULL) +
     theme_regimes()
   save_plot(p, "exhibit_12_quantile_robustness", width = 10, height = 5)
@@ -443,10 +443,20 @@ exhibit_12 <- function(strategies) {
 # -------------------- Exhibit 13: lookback robustness ----------------------
 
 exhibit_13 <- function(strategies) {
+  # Vol-target the diff series per lookback group to 15% ann
   rb <- strategies$robust_lkback %>%
     filter(is.finite(diff)) %>%
     group_by(lookback_years) %>%
-    arrange(date) %>%
+    arrange(date, .by_group = TRUE) %>%
+    mutate(
+      rv    = slider::slide_dbl(diff, ~ sd(.x, na.rm = TRUE),
+                                .before = CFG$vol_window, .after = -1,
+                                .complete = FALSE),
+      scale = (CFG$vol_target / sqrt(12)) / rv,
+      scale = if_else(is.finite(scale), scale, NA_real_),
+      diff  = diff * scale
+    ) %>%
+    filter(is.finite(diff)) %>%
     mutate(cum = cum_pct(diff)) %>%
     ungroup()
 
@@ -463,6 +473,7 @@ exhibit_13 <- function(strategies) {
   p <- ggplot(rb, aes(date, cum, colour = label)) +
     geom_line(linewidth = 0.55) +
     labs(title = "Exhibit 13. Sensitivity to z-score lookback window",
+         subtitle = "Each series scaled to 15% annualised vol (paper convention).",
          x = NULL, y = "Cumulative return (%)", colour = NULL) +
     theme_regimes()
   save_plot(p, "exhibit_13_lookback_robustness", width = 10, height = 5)
@@ -502,7 +513,7 @@ exhibit_a_one <- function(per_factor_data, suffix, subtitle_tail) {
   stats_a2 <- diff_fac %>% group_by(factor) %>%
     summarise(SR = sharpe(diff), .groups = "drop")
   save_table(stats_a2, paste0("exhibit_A2_per_factor_stats", suffix))
-  cat("  [", suffix, "] per-factor Q1-Q5 Sharpes:\n", sep = "")
+  cat("  per-factor Q1-Q5 Sharpes:\n")
   print(stats_a2)
 
   p_a2 <- ggplot(diff_fac, aes(date, cum)) +
@@ -517,12 +528,9 @@ exhibit_a_one <- function(per_factor_data, suffix, subtitle_tail) {
 }
 
 exhibit_a <- function(strategies) {
-  exhibit_a_one(strategies$per_factor,
-                suffix        = "",
-                subtitle_tail = "Unlevered (raw factor returns).")
   exhibit_a_one(strategies$per_factor_vt,
-                suffix        = "_voltgt",
-                subtitle_tail = "Each factor-quintile scaled to 15% annualised vol (paper scale).")
+                suffix        = "",
+                subtitle_tail = "Each factor-quintile scaled to 15% annualised vol (paper convention).")
 }
 
 # -------------------- Orchestrator -----------------------------------------
