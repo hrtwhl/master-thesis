@@ -4,11 +4,20 @@ library(dplyr)
 library(purrr)
 library(tidyr)
 library(zoo)
+library(ggplot2)
 
 # 1. Define the file names
 files <- c(
-  "Data/bonds.csv", "Data/stocks.csv", "Data/oil.csv", "Data/gold.csv", "Data/usd.csv",
-  "Data/copper.csv", "Data/vix.csv", "Data/us3mo.csv", "Data/stock_bond_corr.csv", "Data/yield_curve.csv"
+  "Data/raw/bonds.csv", 
+  "Data/raw/stocks.csv", 
+  "Data/raw/oil.csv", 
+  "Data/raw/gold.csv", 
+  "Data/raw/usd.csv",
+  "Data/raw/copper.csv", 
+  "Data/raw/vix.csv", 
+  "Data/raw/us3mo.csv", 
+  "Data/raw/stock_bond_corr.csv", 
+  "Data/raw/yield_curve.csv"
 )
 
 # 2. Helper function to read files and ensure date formatting
@@ -46,19 +55,19 @@ tail(df_assets)
 head(df_macro)
 tail(df_macro)
 
-View(df_assets)
-View(df_macro)
+# 9. Export dataframes as csv files
 
-library(ggplot2)
-library(tidyr)
+write.csv(df_assets, "Data/asset_data.csv", row.names = FALSE)
+write.csv(df_macro, "Data/macro_data.csv", row.names = FALSE)
 
-# Helper function to create the grid plot
+
+# 10. Plot data for a visual sanity check
 plot_time_series_grid <- function(df, title) {
   df %>%
     # Convert to long format for ggplot
     pivot_longer(cols = -date, names_to = "variable", values_to = "value") %>%
     ggplot(aes(x = date, y = value)) +
-    geom_line(color = "steelblue") +
+    geom_line(color = "darkblue", linewidth =0.2) +
     # Create the grid: scales = "free_y" lets each chart have its own Y-axis range
     facet_wrap(~ variable, scales = "free_y", ncol = 3) + 
     labs(
@@ -66,17 +75,13 @@ plot_time_series_grid <- function(df, title) {
       x = "Year",
       y = "Value"
     ) +
-    theme_minimal() +
-    theme(
-      strip.background = element_rect(fill = "gray90"),
-      strip.text = element_text(face = "bold")
-    )
+    theme_minimal() 
 }
 
-# 1. Plot for df_assets
+# plot for df_assets
 plot_assets <- plot_time_series_grid(df_assets, "Financial Assets Time Series (1990-2025)")
 print(plot_assets)
 
-# 2. Plot for df_macro
+# plot for df_macro
 plot_macro <- plot_time_series_grid(df_macro, "Macroeconomic Indicators Time Series (1990-2025)")
 print(plot_macro)
