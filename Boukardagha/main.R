@@ -73,29 +73,26 @@ build_fingerprint <- function(data_path) {
   
   list(
     data_md5          = data_md5,
-    # Feature params
     VOL_WINDOW        = VOL_WINDOW,
     MEAN_WINDOW       = MEAN_WINDOW,
-    LOG_RETURN_CAP    = LOG_RETURN_CAP,
     ASSET_NAMES       = ASSET_NAMES,
-    # Backtest params
     OOS_START_DATE    = as.character(OOS_START_DATE),
     K_MIN             = K_MIN,
     K_MAX             = K_MAX,
     EM_MAX_ITER       = EM_MAX_ITER,
     EM_TOL            = EM_TOL,
     COV_REG_FACTOR    = COV_REG_FACTOR,
-    MAX_HMM_WINDOW    = MAX_HMM_WINDOW,
+    HMM_INIT_WINDOW   = HMM_INIT_WINDOW,
     ORDER_SELECT_FREQ = ORDER_SELECT_FREQ,
-    VALIDATION_LEN    = VALIDATION_LEN,
+    VAL_SLICE_DAYS    = VAL_SLICE_DAYS,
+    HMM_FIT_FREQ      = HMM_FIT_FREQ,
     LAMBDA_K          = LAMBDA_K,
     G_TEMPLATES       = G_TEMPLATES,
     ETA_SMOOTH        = ETA_SMOOTH,
     GAMMA_RISK        = GAMMA_RISK,
     TAU_TCOST         = TAU_TCOST,
     W_MAX             = W_MAX,
-    REFIT_FREQ        = REFIT_FREQ,
-    # Benchmark params
+    SEED              = SEED,
     EW_REBAL_FREQ     = EW_REBAL_FREQ,
     BENCH_6040_ALLOC  = BENCH_6040_ALLOC
   )

@@ -58,16 +58,22 @@ run_sensitivity <- function(feat, param_name, grid, n_cores = N_CORES) {
                               "GAMMA_RISK", "TAU_TCOST", "LAMBDA_K", "W_MAX",
                               "K_MIN", "K_MAX", "EM_MAX_ITER", "EM_TOL",
                               "COV_REG_FACTOR", "ORDER_SELECT_FREQ",
-                              "VALIDATION_LEN", "REFIT_FREQ",
-                              "MAX_HMM_WINDOW",
+                              "VAL_SLICE_DAYS", "HMM_FIT_FREQ", "N_CORES",
+                              "HMM_INIT_WINDOW", "SEED",
                               "fit_gaussian_hmm", "hmm_init", "hmm_filter_step",
-                              "regularize_cov", "dmvnorm_log", "dmvnorm_log_chol",
+                              "dmvnorm_log",
                               "log_sum_exp", "log_sum_exp_cols",
-                              "select_model_order", "pred_log_score",
+                              "select_model_order",
                               "wasserstein2_gaussian", "init_templates",
-                              "map_components_to_templates", "update_templates",
+                              "assign_to_templates", "update_templates",
                               "compute_conditional_moments",
-                              "ledoit_wolf_shrink", "solve_mvo"))
+                              "ledoit_wolf_shrink", "shrink_cov",
+                              "psd_project", "solve_mvo",
+                              "LEDOIT_WOLF"))
+    # Compile C++ in each worker
+    cpp_path <- normalizePath("hmm_rcpp.cpp")
+    clusterExport(cl, "cpp_path", envir = environment())
+    clusterEvalQ(cl, Rcpp::sourceCpp(cpp_path))
     clusterEvalExpr <- function(cl) {
       clusterEvalQ(cl, { library(MASS); library(Matrix) })
     }
