@@ -1,13 +1,5 @@
 ###############################################################################
-# backtest_engine.R — Matching Python replication.py WassersteinHMM.step()
-#
-# Key matches:
-#   1. Template init: fit K=G_TEMPLATES on init window
-#   2. No feature standardization
-#   3. No history window cap (full expanding history)
-#   4. Refit/K-selection cadence matches Python's step counters
-#   5. Shrinkage on raw return sample (not conditional cov)
-#   6. Conditional moments: simple weighted sum (no cross-term)
+# backtest_engine.R — Matching Python replication.py
 ###############################################################################
 
 run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) {
@@ -34,7 +26,6 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
   if (verbose) cat(sprintf("[backtest] OOS: index %d (%s), %d days\n",
                            t0, dates[t0], n_days - t0 + 1))
   
-  # ── Storage ────────────────────────────────────────────────────────────────
   weights_mat       <- matrix(NA_real_, n_days, n_assets); colnames(weights_mat) <- ASSET_NAMES
   port_returns      <- rep(NA_real_, n_days)
   dominant_reg      <- rep(NA_integer_, n_days)
@@ -43,23 +34,18 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
   turnover_vec      <- rep(NA_real_, n_days)
   w2_distances      <- rep(NA_real_, n_days)
   
-  # ── State (matching Python WassersteinHMM) ─────────────────────────────────
   templates      <- NULL
-  last_model     <- NULL     # last successfully fitted HMM
+  last_model     <- NULL
   current_K      <- K_MIN
   w_prev         <- rep(1 / n_assets, n_assets)
   initialized    <- FALSE
-  
-  # Python step counters (0-indexed modular)
   steps_since_refit     <- 0L
   steps_since_order_sel <- 0L
   
-  # ── Initialize templates on pre-OOS window ─────────────────────────────────
-  # Matching Python: init_X = features[max(0, init_end - HMM_INIT_WINDOW):init_end]
+  # Initialize templates
   init_end <- t0 - 1
   init_start <- max(which(valid)[1], init_end - HMM_INIT_WINDOW + 1)
   init_idx <- which(valid[init_start:init_end]) + init_start - 1
-  
   if (length(init_idx) < 100) stop("Insufficient data for template initialization")
   X_init <- features[init_idx, , drop = FALSE]
   
@@ -69,11 +55,10 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
   last_model <- tmpl_result$model
   current_K <- g_tmpl
   initialized <- TRUE
-  if (verbose) cat(sprintf("  Templates initialized (K=%d = G=%d)\n", g_tmpl, g_tmpl))
+  if (verbose) cat(sprintf("  Templates initialized (K=%d)\n", last_model$K))
   
   t_start <- proc.time()
   
-  # ── Main OOS loop ──────────────────────────────────────────────────────────
   for (i in seq_along(oos_idx)) {
     t <- oos_idx[i]
     
@@ -83,7 +68,6 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
       next
     }
     
-    # Full expanding history up to t (inclusive, matching Python: X_hist = features[:ti+1])
     hist_idx <- which(valid[1:t])
     if (length(hist_idx) < 50) {
       weights_mat[t, ] <- w_prev
@@ -92,23 +76,21 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
     }
     X_hist <- features[hist_idx, , drop = FALSE]
     
-    # ── Periodic K selection (matching Python step counter) ────────────────
+    # Periodic K selection
     if (steps_since_order_sel == 0 || i == 1) {
       order_result <- select_model_order(X_hist, VAL_SLICE_DAYS,
                                           K_MIN, K_MAX, lambda_k)
-      current_K <- order_result$K
+      if (length(order_result$K) == 1) current_K <- order_result$K
     }
     steps_since_order_sel <- (steps_since_order_sel + 1L) %% ORDER_SELECT_FREQ
     
-    # ── HMM refit (matching Python: refit when counter==0 or model is NULL
-    #    or K changed) ────────────────────────────────────────────────────────
+    # HMM refit
     do_refit <- (steps_since_refit == 0) ||
                 is.null(last_model) ||
                 (last_model$K != current_K)
     
     if (do_refit) {
-      new_fit <- tryCatch(fit_gaussian_hmm(X_hist, current_K),
-                           error = function(e) NULL)
+      new_fit <- fit_gaussian_hmm(X_hist, current_K)
       if (!is.null(new_fit)) last_model <- new_fit
     }
     steps_since_refit <- (steps_since_refit + 1L) %% HMM_FIT_FREQ
@@ -120,14 +102,21 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
       next
     }
     
-    # ── Filtered posterior at last observation ────────────────────────────────
+    # Filtered posterior
     posterior <- model$filtered[nrow(model$filtered), ]
     if (any(!is.finite(posterior))) posterior <- rep(1 / model$K, model$K)
     
-    # ── Assign components to templates via W2 distance ───────────────────────
+    # Assign to templates + track W2
     g_of_k <- assign_to_templates(model$mu, model$Sigma, templates)
+    min_w2 <- Inf
+    for (k in seq_len(model$K)) {
+      d_w2 <- wasserstein2_gaussian(model$mu[[k]], model$Sigma[[k]],
+                                     templates[[g_of_k[k]]]$mu, templates[[g_of_k[k]]]$Sigma)
+      if (d_w2 < min_w2) min_w2 <- d_w2
+    }
+    w2_distances[t] <- min_w2
     
-    # ── Aggregate component probs into template probs ────────────────────────
+    # Template probabilities
     p_template <- rep(0, g_tmpl)
     for (k in seq_len(model$K)) {
       p_template[g_of_k[k]] <- p_template[g_of_k[k]] + posterior[k]
@@ -139,21 +128,21 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
     dominant_reg[t] <- which.max(p_template)
     current_K_vec[t] <- current_K
     
-    # ── Update templates (EMA) ───────────────────────────────────────────────
+    # Update templates
     templates <- update_templates(templates, model$mu, model$Sigma,
                                   posterior, g_of_k, eta)
     
-    # ── Conditional moments (simple weighted sum, matching Python) ────────────
+    # Conditional moments
     cond_mom <- compute_conditional_moments(templates, p_template, n_assets)
     
-    # ── Shrinkage on raw return sample (matching Python _shrink) ─────────────
+    # Shrinkage on raw return sample
     R_hist_idx <- which(valid[1:(t - 1)])
     if (length(R_hist_idx) > 50) {
       R_sample <- returns[R_hist_idx, , drop = FALSE]
       cond_mom$Sigma <- shrink_cov(cond_mom$Sigma, R_sample)
     }
     
-    # ── MVO ──────────────────────────────────────────────────────────────────
+    # MVO
     w_new <- solve_mvo(cond_mom$mu, cond_mom$Sigma, w_prev,
                         gamma_ra, tau_tc, w_max)
     
@@ -191,9 +180,8 @@ run_wasserstein_hmm <- function(feat, oos_start = OOS_START_DATE, cfg = list()) 
   )
 }
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# BENCHMARKS + METRICS (unchanged)
+# BENCHMARKS + METRICS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 run_sixty_forty <- function(feat, oos_start = OOS_START_DATE, rebal_freq = EW_REBAL_FREQ) {

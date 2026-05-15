@@ -59,8 +59,10 @@ run_sensitivity <- function(feat, param_name, grid, n_cores = N_CORES) {
                               "K_MIN", "K_MAX", "EM_MAX_ITER", "EM_TOL",
                               "COV_REG_FACTOR", "ORDER_SELECT_FREQ",
                               "VAL_SLICE_DAYS", "HMM_FIT_FREQ", "N_CORES",
-                              "HMM_INIT_WINDOW", "SEED",
+                              "HMM_INIT_WINDOW", "SEED", "HMM_N_RESTARTS",
+                              "LEDOIT_WOLF",
                               "fit_gaussian_hmm", "hmm_init", "hmm_filter_step",
+                              "score_hmm",
                               "dmvnorm_log",
                               "log_sum_exp", "log_sum_exp_cols",
                               "select_model_order",
@@ -68,7 +70,7 @@ run_sensitivity <- function(feat, param_name, grid, n_cores = N_CORES) {
                               "assign_to_templates", "update_templates",
                               "compute_conditional_moments",
                               "ledoit_wolf_shrink", "shrink_cov",
-                              "psd_project", "solve_mvo",
+                              "solve_mvo",
                               "LEDOIT_WOLF"))
     # Compile C++ in each worker
     cpp_path <- normalizePath("hmm_rcpp.cpp")
@@ -106,6 +108,12 @@ run_all_sensitivity <- function(feat) {
   
   # tau (transaction costs)
   sens_results$tau <- run_sensitivity(feat, "tau", SENS_TAU_GRID, n_cores = 1)
+  
+  # lambda_k (model selection penalty)
+  sens_results$lambda_k <- run_sensitivity(feat, "lambda_k", SENS_LAMBDA_GRID, n_cores = 1)
+  
+  # w_max (max position size)
+  sens_results$w_max <- run_sensitivity(feat, "w_max", SENS_WMAX_GRID, n_cores = 1)
   
   all_sens <- do.call(rbind, sens_results)
   

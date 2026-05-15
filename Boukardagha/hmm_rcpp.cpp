@@ -188,3 +188,64 @@ arma::vec hmm_filter_step_cpp(const arma::vec& alpha_prev, const arma::vec& x,
   for (int k = 0; k < K; k++) if (!std::isfinite(a(k))) a(k) = 1.0/K;
   return a;
 }
+
+
+// ─── MVO with exact L1 via proximal gradient (ISTA) ─────────────────────────
+// max mu'w - gamma*w'Sigma*w - tau*||w - w_prev||_1
+// s.t. sum(w)=1, 0<=w<=w_max
+// [[Rcpp::export]]
+arma::vec solve_mvo_cpp(const arma::vec& mu, const arma::mat& Sigma,
+                         const arma::vec& w_prev,
+                         double gamma, double tau, double w_max,
+                         int max_iter = 2000, double tol = 1e-10) {
+  int N = mu.n_elem;
+
+  // PSD projection
+  arma::mat S = 0.5 * (Sigma + Sigma.t());
+  arma::vec eigval; arma::mat eigvec;
+  eig_sym(eigval, eigvec, S);
+  eigval = clamp(eigval, 1e-10, datum::inf);
+  S = eigvec * diagmat(eigval) * eigvec.t();
+
+  // Step size from Lipschitz constant
+  double L = 2.0 * gamma * eigval.max();
+  if (L < 1e-12) L = 1.0;
+  double step = 0.9 / L;
+
+  arma::vec w = w_prev;
+
+  for (int iter = 0; iter < max_iter; iter++) {
+    // Gradient ascent on smooth part: mu - 2*gamma*Sigma*w
+    arma::vec grad = mu - 2.0 * gamma * S * w;
+    arma::vec z = w + step * grad;
+
+    // Proximal for tau*||. - w_prev||_1: soft-thresholding around w_prev
+    arma::vec diff = z - w_prev;
+    arma::vec shrunk = sign(diff) % max(abs(diff) - step * tau, arma::zeros(N));
+    arma::vec w_prox = w_prev + shrunk;
+
+    // Project onto simplex with box constraints: sum=1, 0<=w<=w_max
+    w_prox = clamp(w_prox, 0.0, w_max);
+    // Duchi et al. simplex projection
+    arma::vec u = sort(w_prox, "descend");
+    arma::vec cssv = cumsum(u) - 1.0;
+    int rho = 0;
+    for (int j = N - 1; j >= 0; j--) {
+      if (u(j) - cssv(j) / (j + 1.0) > 0) { rho = j; break; }
+    }
+    double theta = cssv(rho) / (rho + 1.0);
+    arma::vec w_new = clamp(w_prox - theta, 0.0, w_max);
+    // Re-normalize after box clamp (may have violated sum=1)
+    double s = accu(w_new);
+    if (s < 1e-10) {
+      w_new.fill(1.0 / N);
+    } else {
+      w_new /= s;
+    }
+
+    if (arma::max(abs(w_new - w)) < tol) { w = w_new; break; }
+    w = w_new;
+  }
+
+  return w;
+}

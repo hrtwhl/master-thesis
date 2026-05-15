@@ -332,32 +332,57 @@ plot_drawdowns <- function(hmm_result, sf_result, spx_result) {
 
 plot_sensitivity <- function(sens_df) {
   if (is.null(sens_df) || nrow(sens_df) == 0) return()
-
+  
   params <- unique(sens_df$param)
-
+  n_params <- length(params)
+  
+  # Combined overview: Sharpe for all params on one chart
+  fp <- save_png("10_sensitivity_overview.png", width = 14, height = max(5, 3 * ceiling(n_params / 3)))
+  n_row <- ceiling(n_params / 3)
+  par(mfrow = c(n_row, 3), mar = c(4.5, 4, 3, 1), cex.main = 1.0, las = 1)
+  
   for (p in params) {
-    fp <- save_png(sprintf("10_sensitivity_%s.png", p), height = 5)
-    sub <- sens_df[sens_df$param == p, ]
-    sub <- sub[!is.na(sub$Sharpe), ]
+    sub <- sens_df[sens_df$param == p & !is.na(sens_df$Sharpe), ]
+    if (nrow(sub) == 0) { plot.new(); next }
+    
+    # Bar plot of Sharpe with color gradient
+    cols <- colorRampPalette(c("#C44E52", "#EEEEEE", "#4C72B0"))(100)
+    sharpe_range <- range(sub$Sharpe, na.rm = TRUE)
+    col_idx <- pmax(1, pmin(100, round(
+      (sub$Sharpe - sharpe_range[1]) / max(diff(sharpe_range), 1e-6) * 99 + 1)))
+    
+    bp <- barplot(sub$Sharpe, names.arg = sub$value, col = cols[col_idx],
+                   main = paste0(p, " → Sharpe"), xlab = p,
+                   ylab = "Sharpe", border = NA, ylim = c(0, max(sub$Sharpe) * 1.2))
+    text(bp, sub$Sharpe, sprintf("%.3f", sub$Sharpe), pos = 3, cex = 0.8)
+  }
+  
+  dev.off()
+  cat(sprintf("[plot] Saved: 10_sensitivity_overview.png\n"))
+  
+  # Individual per-param detail plots (Sharpe + MaxDD + Turnover)
+  for (p in params) {
+    fp2 <- save_png(sprintf("10_sensitivity_%s.png", p), height = 4)
+    sub <- sens_df[sens_df$param == p & !is.na(sens_df$Sharpe), ]
     if (nrow(sub) == 0) { dev.off(); next }
-
-    par(mfrow = c(1, 3), mar = c(4, 4, 2, 1), cex.main = 1.0)
-
-    plot(sub$value, sub$Sharpe, type = "b", pch = 19, col = REGIME_COLORS[1],
+    
+    par(mfrow = c(1, 3), mar = c(4, 4, 2.5, 1), cex.main = 0.95)
+    
+    plot(sub$value, sub$Sharpe, type = "b", pch = 19, col = REGIME_COLORS[1], lwd = 2,
          main = paste0(p, " → Sharpe"), xlab = p, ylab = "Sharpe")
     add_grid(); abline(v = sub$value[which.max(sub$Sharpe)], col = REGIME_COLORS[4], lty = 2)
-
-    plot(sub$value, sub$Max_DD, type = "b", pch = 19, col = REGIME_COLORS[4],
+    
+    plot(sub$value, sub$Max_DD, type = "b", pch = 19, col = REGIME_COLORS[4], lwd = 2,
          main = paste0(p, " → Max DD"), xlab = p, ylab = "Max Drawdown")
     add_grid()
-
-    plot(sub$value, sub$Avg_Turnover, type = "b", pch = 19, col = REGIME_COLORS[3],
-         main = paste0(p, " → Turnover"), xlab = p, ylab = "Avg Daily Turnover")
+    
+    plot(sub$value, sub$Avg_Turnover, type = "b", pch = 19, col = REGIME_COLORS[3], lwd = 2,
+         main = paste0(p, " → Turnover"), xlab = p, ylab = "Avg Turnover")
     add_grid()
-
+    
     par(mfrow = c(1, 1))
     dev.off()
-    cat(sprintf("[plot] Saved: sensitivity_%s.png\n", p))
+    cat(sprintf("[plot] Saved: 10_sensitivity_%s.png\n", p))
   }
 }
 
@@ -507,12 +532,10 @@ plot_rolling_sharpe <- function(hmm_result, sf_result, spx_result, window = 252)
   rolling_sharpe <- function(r, w) {
     n <- length(r); out <- rep(NA_real_, n)
     if (n < w) return(out)
-    cs  <- cumsum(r); cs2 <- cumsum(r^2)
     for (i in w:n) {
-      s  <- cs[i] - ifelse(i - w > 0, cs[i - w], 0)
-      s2 <- cs2[i] - ifelse(i - w > 0, cs2[i - w], 0)
-      mu <- s / w; var_est <- s2 / w - mu^2
-      if (var_est > 0) out[i] <- (mu * 252) / (sqrt(var_est * 252 / (w - 1)))
+      window_r <- r[(i - w + 1):i]
+      mu <- mean(window_r); vol <- sd(window_r)
+      if (vol > 1e-10) out[i] <- mu / vol * sqrt(252)
     }
     out
   }

@@ -47,12 +47,12 @@ if (interactive()) {
 t_total <- proc.time()
 
 cat("\n[main] Loading modules...\n")
-source("config.R")
-source("data_processor.R")
-source("model_functions.R")
-source("backtest_engine.R")
-source("diagnostics_and_robustness.R")
-source("visualizer.R")
+source("Boukardagha/config.R")
+source("Boukardagha/data_processor.R")
+source("Boukardagha/model_functions.R")
+source("Boukardagha/backtest_engine.R")
+source("Boukardagha/diagnostics_and_robustness.R")
+source("Boukardagha/visualizer.R")
 
 # Ensure output dirs exist
 dir.create(OUTPUT_DIR, showWarnings = FALSE, recursive = TRUE)
@@ -93,6 +93,7 @@ build_fingerprint <- function(data_path) {
     TAU_TCOST         = TAU_TCOST,
     W_MAX             = W_MAX,
     SEED              = SEED,
+    HMM_N_RESTARTS    = HMM_N_RESTARTS,
     EW_REBAL_FREQ     = EW_REBAL_FREQ,
     BENCH_6040_ALLOC  = BENCH_6040_ALLOC
   )
@@ -104,7 +105,9 @@ build_sensitivity_fingerprint <- function(backtest_fp) {
     SENS_G_GRID     = SENS_G_GRID,
     SENS_ETA_GRID   = SENS_ETA_GRID,
     SENS_GAMMA_GRID = SENS_GAMMA_GRID,
-    SENS_TAU_GRID   = SENS_TAU_GRID
+    SENS_TAU_GRID   = SENS_TAU_GRID,
+    SENS_LAMBDA_GRID = SENS_LAMBDA_GRID,
+    SENS_WMAX_GRID  = SENS_WMAX_GRID
   ))
 }
 
@@ -328,3 +331,5 @@ save.image(file.path(OUTPUT_DIR, "workspace.RData"))
 cat(sprintf("  Workspace saved: %s/workspace.RData\n", OUTPUT_DIR))
 
 cat("\n[main] Done.\n")
+
+
