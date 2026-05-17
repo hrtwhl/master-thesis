@@ -4,58 +4,56 @@
 library(quantmod)
 library(zoo)
 
-# Define the tickers and their desired column names
+# 1. Define the tickers with their desired column names
 ticker_mapping <- c(
-  stocks   = "SPY",
-  bonds = "AGG",
-  gold  = "GLD",
-  oil   = "USO",
-  usd   = "UUP"
+  stocks = "^GSPC",
+  bonds  = "IEF",
+  gold   = "GLD",
+  oil    = "USO",
+  usd    = "UUP"
 )
 
 # Create an empty environment to store the downloaded data
 data_env <- new.env()
 
-# Download daily data from Yahoo Finance
-# Setting 'from' to a very early date ensures we get the earliest available data for each ticker
-getSymbols(ticker_mapping, env = data_env, src = "yahoo", from = "1900-01-01", auto.assign = TRUE)
+# 2. Download data using the values of the vector
+created_objects <- getSymbols(ticker_mapping, env = data_env, src = "yahoo", from = "1900-01-01", auto.assign = TRUE)
+# created_objects is now: c("GSPC", "AGG", "GLD", "USO", "UUP")
 
-# Extract the Adjusted Close prices for each ticker into a list
-# (Adjusted close is best practice for daily data as it accounts for dividends and splits)
-price_list <- lapply(ticker_mapping, function(sym) {
+# 3. Extract Adjusted Prices
+price_list <- lapply(created_objects, function(sym) {
   Ad(get(sym, envir = data_env))
 })
 
-# Merge all the individual xts time-series objects into one combined xts object
-# This automatically aligns the dates and introduces NAs where days don't match
+# 4. Merge individual xts objects into one
 merged_xts <- do.call(merge, price_list)
 
-# Rename the columns to your specified names (spx, bonds, gold, oil, usd)
+# 5. Correctly map the names to the columns
+# We use names(ticker_mapping) which corresponds perfectly to the merge order
 colnames(merged_xts) <- names(ticker_mapping)
 
-# Forward fill the missing values
-# na.rm = FALSE ensures leading NAs (before a specific ETF existed) are kept as NA
+# 6. Forward fill missing values
 merged_xts_filled <- na.locf(merged_xts, na.rm = FALSE)
 
-# Convert the final xts object into a standard R dataframe
-# Extract the date index into its own 'date' column
+# 7. Cut off data at the end of 2025 (done efficiently while still an xts object)
+merged_xts_2025 <- merged_xts_filled["/2025-12-31"]
+
+# 8. Convert to a standard R dataframe
 final_df <- data.frame(
-  date = index(merged_xts_filled), 
-  coredata(merged_xts_filled)
+  date = index(merged_xts_2025), 
+  coredata(merged_xts_2025)
 )
 
 # Reset row names for a clean dataframe
 rownames(final_df) <- NULL
 
-# View the first and last few rows to verify
-head(final_df)
-tail(final_df)
-
+# 9. Drop any rows containing remaining NAs (e.g., periods before certain ETFs launched)
 final_df <- na.omit(final_df)
 
+# 10. Save and View
 write.csv(final_df, "Data/asset_data_yf.csv", row.names = FALSE)
 
-
+View(final_df)
 
 
 
@@ -151,4 +149,6 @@ missing_df <- data.frame(
 )
 print(missing_df, row.names = FALSE)
 cat("\nDone.\n")
+
+
 
