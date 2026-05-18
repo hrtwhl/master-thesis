@@ -3,7 +3,11 @@ data.py
 -------
 Data acquisition and feature engineering.
 
-* `load_prices`     : pulls auto-adjusted close prices from Yahoo Finance.
+Prices are loaded from the local CSV at `config.CSV_PATH`. The CSV is
+expected to have a `date` column plus one column per asset, named per
+`config.CSV_COLUMN_MAP`. Any extra columns are silently ignored.
+
+* `load_prices`     : reads and aligns the price CSV.
 * `compute_returns` : daily log returns.
 * `build_features`  : the 3N-dimensional feature vector x_t = [r_t, σ_t, m_t]
                       used by the Gaussian HMM. Strict causality is preserved
@@ -16,19 +20,18 @@ on the entire return history and slices the result inside the loop, instead
 of re-computing features at every OOS date as in the original notebook.
 Because every rolling window is causal, slicing the precomputed feature
 matrix up to `t-1` is mathematically identical to recomputing features on
-`returns[:t-1]`, but ~700x cheaper for a 700-day OOS period.
+`returns[:t-1]`, but ~1000× cheaper for a 5000-day OOS period.
 """
 
 from __future__ import annotations
 
-import pickle
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from config import (ASSET_NAMES, CACHE_DIR, END_DATE, MOM_WINDOW, RUN,
-                    START_DATE, TICKERS, VOL_WINDOW)
+from config import (ASSET_NAMES, CSV_COLUMN_MAP, CSV_PATH, END_DATE,
+                    MOM_WINDOW, START_DATE, VOL_WINDOW)
 
 
 # --------------------------------------------------------------------- #
@@ -37,47 +40,54 @@ from config import (ASSET_NAMES, CACHE_DIR, END_DATE, MOM_WINDOW, RUN,
 def load_prices(
     start: str | None = None,
     end:   str | None = None,
-    use_cache: bool   = True,
+    path:  Path | None = None,
 ) -> pd.DataFrame:
-    """Download (or load cached) daily adjusted close prices.
+    """Read prices from `config.CSV_PATH` (or an override path).
+
+    The CSV must have a `date` column and the source columns named in
+    `CSV_COLUMN_MAP` (extras are ignored). Dates are parsed, the frame
+    is sorted, and any rows with missing data are dropped.
+
+    Parameters
+    ----------
+    start, end
+        Optional date filters. Default to `config.START_DATE` and
+        `config.END_DATE` (None ⇒ last available row).
+    path
+        Optional CSV path override.
 
     Returns
     -------
-    DataFrame with one column per asset (using friendly names from
-    `config.ASSET_NAMES`) and DatetimeIndex.
+    DataFrame indexed by date, columns = `ASSET_NAMES`, no NaNs.
     """
     start = start or START_DATE
-    end   = end   or END_DATE or pd.Timestamp.today().strftime("%Y-%m-%d")
+    end   = end   or END_DATE
+    path  = path  or CSV_PATH
 
-    cache_file: Path = CACHE_DIR / f"prices_{start}_{end}.pkl"
-    if use_cache and cache_file.exists():
-        with cache_file.open("rb") as fh:
-            return pickle.load(fh)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"CSV data file not found at {path}. Update config.CSV_PATH."
+        )
 
-    # Lazy import: yfinance is slow to import and we want fast CLI help text.
-    import yfinance as yf
+    df = pd.read_csv(path, parse_dates=["date"]).set_index("date").sort_index()
 
-    print(f"[data] Downloading prices for {ASSET_NAMES}  ({start} → {end}) …")
-    raw = yf.download(
-        list(TICKERS.values()),
-        start=start,
-        end=end,
-        auto_adjust=True,
-        progress=False,
-    )["Close"]
+    missing = [src for src in CSV_COLUMN_MAP if src not in df.columns]
+    if missing:
+        raise ValueError(
+            f"CSV at {path} is missing expected columns: {missing}. "
+            f"Found columns: {list(df.columns)}"
+        )
 
-    # Rename Yahoo symbol → friendly names and enforce column order
-    inverse = {v: k for k, v in TICKERS.items()}
-    raw = raw.rename(columns=inverse)[ASSET_NAMES]
+    prices = df.rename(columns=CSV_COLUMN_MAP)[ASSET_NAMES]
 
-    prices = raw.dropna(how="any").sort_index()
-    print(f"[data] Got {len(prices):,} clean daily observations.")
+    if start:
+        prices = prices.loc[prices.index >= pd.Timestamp(start)]
+    if end:
+        prices = prices.loc[prices.index <= pd.Timestamp(end)]
 
-    if use_cache:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        with cache_file.open("wb") as fh:
-            pickle.dump(prices, fh)
-
+    prices = prices.dropna(how="any")
+    print(f"[data] Loaded {len(prices):,} daily observations "
+          f"({prices.index.min().date()} → {prices.index.max().date()}).")
     return prices
 
 
@@ -118,7 +128,7 @@ def build_features(
 # --------------------------------------------------------------------- #
 # 4. One-shot loader
 # --------------------------------------------------------------------- #
-def load_all(use_cache: bool = True) -> dict:
+def load_all() -> dict:
     """Convenience: prices, returns, features, and the train/test split.
 
     Returns
@@ -128,7 +138,7 @@ def load_all(use_cache: bool = True) -> dict:
     """
     from config import SPLIT_DATE   # local import keeps import-cost low
 
-    prices   = load_prices(use_cache=use_cache)
+    prices   = load_prices()
     returns  = compute_returns(prices)
     features = build_features(returns)
 

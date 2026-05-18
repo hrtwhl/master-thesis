@@ -5,7 +5,5 @@ scikit-learn>=1.4
 hmmlearn>=0.3.0
 cvxpy>=1.5
 osqp>=0.6
-yfinance>=0.2.40
 matplotlib>=3.8
-tqdm>=4.66
 joblib>=1.3

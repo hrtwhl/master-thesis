@@ -45,7 +45,7 @@ def main() -> None:
     # 1. Data
     # ----------------------------------------------------- #
     _banner("STEP 1 — Load data, compute returns, build features")
-    bundle = load_all(use_cache=RUN.use_cache)
+    bundle = load_all()
     print(f"  prices     : {bundle['prices'].shape}")
     print(f"  returns    : {bundle['returns'].shape}")
     print(f"  features   : {bundle['features'].shape}")
@@ -63,7 +63,7 @@ def main() -> None:
         returns_test  = bundle["returns_test"],
         features_all  = bundle["features"],
         verbose       = RUN.verbose,
-        use_tqdm      = RUN.tqdm,
+        progress_pct  = 5.0,
     )
 
     # Quick summary so the operator sees the headline numbers immediately

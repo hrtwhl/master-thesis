@@ -16,6 +16,7 @@ Section references match Boukardagha (2026):
 
 from __future__ import annotations
 
+import logging
 import warnings
 
 import numpy as np
@@ -25,6 +26,13 @@ from sklearn.covariance import LedoitWolf
 
 from config import HMM, RUN
 
+# hmmlearn emits its "Model is not converging" (and a few other ill-conditioning
+# notices) at WARNING level via `logging.warning`. Suppressing them at ERROR
+# level is clean; we already retry the fit with stronger regularization and
+# fall back to the cached HMM on persistent failure, so these warnings carry
+# no actionable information for the end user.
+logging.getLogger("hmmlearn").setLevel(logging.ERROR)
+logging.getLogger("hmmlearn.base").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="hmmlearn")
 
 
@@ -80,23 +88,42 @@ def w2_gaussian(
 # --------------------------------------------------------------------- #
 # 2.  Predictive model-order selection
 # --------------------------------------------------------------------- #
+# Progressive `min_covar` ladder used by both `_fit_and_score` (K-selection)
+# and `fit_hmm` (main fit) to recover from rare non-PSD covariance updates
+# during EM. Each rung adds more diagonal regularization.
+_MIN_COVAR_LADDER: tuple[float, ...] = (1e-3, 1e-2, 1e-1)
+
+# Seed offsets tried at each `min_covar` rung in `fit_hmm`. Different EM
+# initializations very often resolve the rare degenerate-regime case that
+# produces non-PSD covariances.
+_SEED_OFFSETS: tuple[int, ...] = (0, 1, 7, 23)
+
+
 def _fit_and_score(
     K: int, X_fit: np.ndarray, X_val: np.ndarray,
     lam_k: float, n_iter: int, random_state: int,
 ) -> tuple[int, float]:
-    """Helper for joblib: fit a K-state HMM on X_fit, score on X_val."""
-    try:
-        hmm = GaussianHMM(
-            n_components=int(K),
-            covariance_type="full",
-            n_iter=n_iter,
-            random_state=random_state,
-        )
-        hmm.fit(X_fit)
-        predll = float(hmm.score(X_val))
-        return int(K), predll - lam_k * float(K)
-    except Exception:
-        return int(K), -np.inf
+    """Helper for joblib: fit a K-state HMM on X_fit, score on X_val.
+
+    Uses the same `min_covar` regularization ladder as `fit_hmm` so a
+    candidate K isn't unfairly knocked out of the selection by a transient
+    numerical hiccup.
+    """
+    for mc in _MIN_COVAR_LADDER:
+        try:
+            hmm = GaussianHMM(
+                n_components=int(K),
+                covariance_type="full",
+                n_iter=n_iter,
+                random_state=random_state,
+                min_covar=float(mc),
+            )
+            hmm.fit(X_fit)
+            predll = float(hmm.score(X_val))
+            return int(K), predll - lam_k * float(K)
+        except (ValueError, np.linalg.LinAlgError, FloatingPointError):
+            continue
+    return int(K), -np.inf
 
 
 def select_K_predictive(
@@ -141,16 +168,47 @@ def select_K_predictive(
 # --------------------------------------------------------------------- #
 # 3.  HMM fitting + regime moments (forward returns)
 # --------------------------------------------------------------------- #
-def fit_hmm(X: np.ndarray, K: int,
-            n_iter: int = HMM.n_iter,
-            random_state: int = HMM.random_state) -> GaussianHMM:
-    """Fit a K-state Gaussian HMM (full covariance) on the strict-causal X."""
-    hmm = GaussianHMM(
-        n_components=K, covariance_type="full",
-        n_iter=n_iter, random_state=random_state,
-    )
-    hmm.fit(X)
-    return hmm
+def fit_hmm(
+    X: np.ndarray,
+    K: int,
+    n_iter: int = HMM.n_iter,
+    random_state: int = HMM.random_state,
+) -> "GaussianHMM | None":
+    """Fit a K-state Gaussian HMM (full covariance) with robust retry.
+
+    On rare occasions hmmlearn's EM produces a non-positive-definite
+    emission covariance — typically when one regime collects too few
+    observations during an iteration. The next `predict_proba` call then
+    raises ``ValueError: 'covars' must be symmetric, positive-definite``,
+    crashing the backtest mid-run.
+
+    This function tries the fit with progressively stronger diagonal
+    regularization (`min_covar`) and a small ladder of alternative random
+    seeds. On every attempt it also validates that `predict_proba` works
+    on a small slice of `X` before returning. If every attempt fails it
+    returns ``None``; the caller is expected to fall back to a cached HMM.
+    """
+    last_err: Exception | None = None
+    for mc in _MIN_COVAR_LADDER:
+        for seed_off in _SEED_OFFSETS:
+            try:
+                hmm = GaussianHMM(
+                    n_components=K,
+                    covariance_type="full",
+                    n_iter=n_iter,
+                    random_state=int(random_state) + int(seed_off),
+                    min_covar=float(mc),
+                )
+                hmm.fit(X)
+                # Validate: predict_proba is the actual failure surface.
+                _ = hmm.predict_proba(X[-min(50, len(X)):])
+                return hmm
+            except (ValueError, np.linalg.LinAlgError, FloatingPointError) as e:
+                last_err = e
+                continue
+
+    # Total failure — caller will keep using the previously cached HMM.
+    return None
 
 
 def compute_regime_moments_forward(

@@ -18,13 +18,13 @@ template tracking, EMA rate, MVO solve — is unchanged.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 import cvxpy as cp
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 from config import HMM, MVO, N_ASSETS, RUN, ASSET_NAMES
 from data import build_features
@@ -116,7 +116,7 @@ def run_backtest(
     returns_test:  pd.DataFrame,
     features_all:  Optional[pd.DataFrame] = None,
     verbose:       bool = RUN.verbose,
-    use_tqdm:      bool = RUN.tqdm,
+    progress_pct:  float = 5.0,
 ) -> BacktestResult:
     """Run the strictly causal expanding-window Wasserstein-HMM + MVO backtest.
 
@@ -129,6 +129,11 @@ def run_backtest(
     features_all
         Optional precomputed feature matrix on the full `returns`. If `None`
         it is built here. **Strongly recommended** for speed.
+    verbose
+        If True, print K-state transitions (rare, monotone-K).
+    progress_pct
+        Print a status line every this-many percent done (default 5.0).
+        Set to 0 or negative to silence progress entirely.
 
     Returns
     -------
@@ -147,7 +152,7 @@ def run_backtest(
     feat_values_np  = features_all.to_numpy()
 
     test_dates = returns_test.index
-    iterator = tqdm(test_dates, desc="Backtest", ncols=100) if use_tqdm else test_dates
+    n_total = len(test_dates)
 
     # ------- Loop state ------- #
     weights_oos:        list[np.ndarray] = []
@@ -158,21 +163,52 @@ def run_backtest(
     tpl_prob_history:   list[float]      = []
     tpl_count_history:  list[int]        = []
 
+    # Progress logger state
+    t_start   = time.time()
+    last_log  = -progress_pct  # forces a header line on the first iteration
+    fail_count = 0             # # days a refit silently fell back to cached HMM
+
     w_prev = np.zeros(N_ASSETS)
     K_curr = HMM.min_regimes
     K_candidate = K_curr
     MU_tpl: Optional[np.ndarray]  = None
     SIG_tpl: Optional[np.ndarray] = None
 
+    # Cached HMM between refits (see EXTENSION 3 in config.py).
+    # We refit on the f_hmm schedule and just call `predict_proba` on the
+    # daily-extended feature matrix on all other days.
+    hmm_cached: Optional["object"]  = None
+    hmm_K:      Optional[int]       = None
+
     if verbose:
         print(f"Running Wasserstein-HMM + MVO backtest "
               f"(strictly causal, OOS days = {len(test_dates)})\n")
 
-    for t_i, date in enumerate(iterator):
+    for t_i, date in enumerate(test_dates):
         # Index of "first date >= today" in the feature matrix.
         # Everything strictly before is allowed.
         cutoff_feat = np.searchsorted(feat_idx_np, np.datetime64(date), side="left")
         cutoff_ret  = np.searchsorted(hist_idx_np, np.datetime64(date), side="left")
+
+        # Periodic progress log (every `progress_pct`% done)
+        pct_done = (t_i + 1) / n_total * 100.0
+        if progress_pct > 0 and (pct_done - last_log >= progress_pct
+                                 or t_i == n_total - 1):
+            elapsed = time.time() - t_start
+            rate = (t_i + 1) / max(elapsed, 1e-6)
+            eta_min = (n_total - t_i - 1) / rate / 60.0
+            arr = np.asarray(pnl_oos, dtype=float)
+            if arr.size > 5 and arr.std(ddof=1) > 0:
+                sh = np.sqrt(252) * arr.mean() / arr.std(ddof=1)
+                sh_str = f"Sharpe={sh:+.2f}"
+            else:
+                sh_str = "Sharpe=  n/a"
+            G_now = 0 if MU_tpl is None else MU_tpl.shape[0]
+            print(f"  [{pct_done:5.1f}%]  {t_i+1:>5}/{n_total}  "
+                  f"date {pd.Timestamp(date).date()}  "
+                  f"elapsed {elapsed/60:5.1f}m  ETA {eta_min:5.1f}m  "
+                  f"K={K_curr}  G={G_now}  {sh_str}", flush=True)
+            last_log = pct_done
 
         if cutoff_feat < 2:
             # Not enough history yet → hold previous weights.
@@ -192,7 +228,8 @@ def run_backtest(
         ret_align = ret_hist_full.iloc[:cutoff_ret].loc[feat_idx]
 
         # ---- (A) Periodic predictive K selection -------------------- #
-        if (t_i % HMM.f_k == 0) or (t_i == 0):
+        is_K_day = (t_i % HMM.f_k == 0) or (t_i == 0)
+        if is_K_day:
             K_candidates = list(range(K_curr, HMM.max_regimes + 1))
             K_candidate = select_K_predictive(
                 X_all=X,
@@ -202,22 +239,63 @@ def run_backtest(
                 random_state=HMM.random_state,
                 lam_k=HMM.lam_k,
             )
-        K_curr = max(K_curr, K_candidate)     # enforce non-decreasing K
+        K_prev = K_curr
+        K_curr = max(K_curr, K_candidate)     # enforce non-decreasing K (paper)
 
-        if verbose:
-            print(f"{pd.Timestamp(date).date()}  K = {K_curr}")
+        if verbose and K_curr != K_prev:
+            print(f"  {pd.Timestamp(date).date()}  K: {K_prev} → {K_curr}", flush=True)
 
-        # ---- (B) Fit HMM at chosen K -------------------------------- #
-        hmm = fit_hmm(X, K=K_curr, n_iter=HMM.n_iter,
-                      random_state=HMM.random_state)
-        probsK = hmm.predict_proba(X)
+        # ---- (B) Fit OR reuse the HMM ------------------------------- #
+        # The HMM EM is refit on the `f_hmm` cadence (default = 5 days,
+        # weekly), or whenever K has just changed. On non-refit days we
+        # simply call `predict_proba` on the freshly extended X, so all
+        # downstream regime moments / templates / MVO updates remain
+        # strictly daily. This deviates from the paper (which refits the
+        # HMM every day) but makes the 21-year OOS computationally
+        # tractable; setting `HMM.f_hmm = 1` in config.py recovers the
+        # exact daily-refit behaviour.
+        need_refit = (
+            hmm_cached is None
+            or hmm_K != K_curr
+            or (t_i % HMM.f_hmm == 0)
+        )
+        if need_refit:
+            new_hmm = fit_hmm(X, K=K_curr, n_iter=HMM.n_iter,
+                              random_state=HMM.random_state)
+            if new_hmm is not None:
+                hmm_cached = new_hmm
+                hmm_K      = K_curr
+            else:
+                # Rare EM/PSD failure. Fall through using the cached HMM
+                # from the previous successful refit. K_curr stays at its
+                # (possibly higher) "wanted" value, but downstream code
+                # uses hmm_K — the actual dimension of the cached probs.
+                fail_count += 1
+
+        if hmm_cached is None:
+            # No usable HMM at all yet (very rare: only if the very first
+            # refit of the run failed). Hold weights.
+            r_today = returns.loc[date].to_numpy()
+            pnl     = float(w_prev @ r_today)
+            weights_oos.append(w_prev.copy())
+            pnl_oos.append(pnl); dates_oos.append(date)
+            K_history.append(np.nan)
+            tpl_label_history.append(np.nan)
+            tpl_prob_history.append(np.nan)
+            tpl_count_history.append(0 if MU_tpl is None else MU_tpl.shape[0])
+            continue
+
+        # K_active = dimension of the HMM we're actually using today
+        K_active = int(hmm_K)
+
+        probsK = hmm_cached.predict_proba(X)
         pK     = probsK[-1].copy()
         zK_raw = np.argmax(probsK, axis=1)
 
         # Forward-return regime moments
         z_s = zK_raw[:-1]
         MU_K, SIG_K = compute_regime_moments_forward(
-            ret_align, z_s, K=K_curr, n_assets=N_ASSETS, min_obs=HMM.min_obs
+            ret_align, z_s, K=K_active, n_assets=N_ASSETS, min_obs=HMM.min_obs
         )
 
         # ---- (C) Initialize / spawn / map / update templates -------- #
@@ -253,13 +331,19 @@ def run_backtest(
 
         weights_oos.append(w_t)
         pnl_oos.append(pnl); dates_oos.append(date)
-        K_history.append(K_curr)
+        K_history.append(K_active)   # K actually used today (= hmm_K)
         g_hat = int(np.argmax(pG)) if np.all(np.isfinite(pG)) else np.nan
         tpl_label_history.append(g_hat)
         tpl_prob_history.append(float(np.max(pG))
                                 if np.all(np.isfinite(pG)) else np.nan)
         tpl_count_history.append(G)
         w_prev = w_t
+
+    # End-of-run note about fit fallbacks, if any.
+    if fail_count > 0:
+        print(f"  [note] {fail_count} HMM refit(s) fell back to the cached "
+              f"model due to non-PSD covariance (~{fail_count/n_total:.1%} of days). "
+              f"Cached HMM was reused on those days.", flush=True)
 
     # ------- Assemble outputs ------- #
     idx = pd.DatetimeIndex(dates_oos).sort_values()
