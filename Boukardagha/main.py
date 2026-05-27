@@ -1,96 +1,50 @@
 """
 main.py
--------
-Entry point for the Wasserstein-HMM regime-aware allocation pipeline.
+=======
+End-to-end driver:
+    1) run pure-market Wasserstein-HMM backtest      (run_pure.py)
+    2) run hierarchical macro+market backtest        (run_hier.py)
+    3) aggregate -> tables + charts + benchmarks     (aggregate.py)
+    4) build narrative summary                       (narrative.py)
+    5) build HTML report                             (report.py)
 
-Usage
-~~~~~
-    python main.py
+Each stage is also a standalone script:
 
-What it does
-~~~~~~~~~~~~
-1. Load (or download) daily prices, compute log returns, precompute features.
-2. Run the strictly causal expanding-window Wasserstein-HMM + MVO backtest.
-3. Build SPX Buy & Hold, Equal-Weight, and 60/40 benchmarks aligned to the
-   OOS window.
-4. Export every table (CSV) and every figure (PNG) to `./output/`.
-
-Everything is parameterized in `config.py` — modify there, not here.
+    python run_pure.py        # pure-market backtest only
+    python run_hier.py        # hierarchical backtest only
+    python aggregate.py       # reads raw CSVs and plots
+    python narrative.py       # builds Markdown summary
+    python report.py          # builds HTML report
 """
-
-from __future__ import annotations
-
-import time
-from pathlib import Path
-
-import pandas as pd
-
-from backtest import run_backtest
-from config import RUN, OUTPUT_DIR, ensure_dirs
-from data import load_all
-from reporting import export_all
+import os, sys, time, warnings
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+warnings.filterwarnings("ignore")
 
 
-def _banner(msg: str) -> None:
-    print("\n" + "=" * 78)
-    print(f"  {msg}")
-    print("=" * 78)
-
-
-def main() -> None:
-    ensure_dirs()
+def main():
     t0 = time.time()
 
-    # ----------------------------------------------------- #
-    # 1. Data
-    # ----------------------------------------------------- #
-    _banner("STEP 1 — Load data, compute returns, build features")
-    bundle = load_all()
-    print(f"  prices     : {bundle['prices'].shape}")
-    print(f"  returns    : {bundle['returns'].shape}")
-    print(f"  features   : {bundle['features'].shape}")
-    print(f"  train/test : {len(bundle['returns_train'])} / "
-          f"{len(bundle['returns_test'])}  "
-          f"(split @ {bundle['split_date'].date()})")
+    print("===========  STAGE 1 / 5 : PURE MARKET  ===========", flush=True)
+    import run_pure
+    run_pure.main()
 
-    # ----------------------------------------------------- #
-    # 2. Backtest
-    # ----------------------------------------------------- #
-    _banner("STEP 2 — Wasserstein-HMM + MVO backtest (strictly causal)")
-    result = run_backtest(
-        returns       = bundle["returns"],
-        returns_train = bundle["returns_train"],
-        returns_test  = bundle["returns_test"],
-        features_all  = bundle["features"],
-        verbose       = RUN.verbose,
-        progress_pct  = 5.0,
-    )
+    print("\n===========  STAGE 2 / 5 : HIERARCHICAL  ===========", flush=True)
+    import run_hier
+    run_hier.main()
 
-    # Quick summary so the operator sees the headline numbers immediately
-    sharpe = (result.pnl.mean() / (result.pnl.std(ddof=1) + 1e-12)) * (252 ** 0.5)
-    cum    = result.pnl.cumsum()
-    mdd    = float((cum - cum.cummax()).min())
-    print(f"\n  Headline:  Sharpe = {sharpe:.2f}    Max DD = {mdd:.2%}    "
-          f"OOS days = {len(result.pnl)}")
+    print("\n===========  STAGE 3 / 5 : AGGREGATE  ===========", flush=True)
+    import aggregate
+    aggregate.main()
 
-    # ----------------------------------------------------- #
-    # 3. Export everything (CSVs + PNGs)
-    # ----------------------------------------------------- #
-    _banner("STEP 3 — Export figures (PNG) and tables (CSV)")
-    artefacts = export_all(result, bundle["returns"])
+    print("\n===========  STAGE 4 / 5 : NARRATIVE  ===========", flush=True)
+    import narrative
+    narrative.main()
 
-    print(f"\n  Wrote {len(artefacts['figures'])} figures and "
-          f"{len(artefacts['tables']) + 1} tables to:")
-    print(f"  {OUTPUT_DIR}")
+    print("\n===========  STAGE 5 / 5 : HTML REPORT  ===========", flush=True)
+    import report
+    report.main()
 
-    # Headline performance table to console
-    print("\n--- Performance vs benchmarks ----------------------------------")
-    print(artefacts["tables"]["performance"].round(3).to_string())
-
-    print("\n--- Regime-conditioned portfolio performance --------------------")
-    print(artefacts["tables"]["regime_perf"].round(3).to_string())
-
-    _banner(f"DONE in {time.time() - t0:.1f}s")
+    print(f"\n[main] total wall time: {time.time()-t0:.1f}s", flush=True)
 
 
 if __name__ == "__main__":

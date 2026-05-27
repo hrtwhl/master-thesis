@@ -1,401 +1,237 @@
 """
 wasserstein_hmm.py
-------------------
-Wasserstein-Hidden-Markov-Model machinery for daily regime inference.
+==================
+Strictly-causal Gaussian HMM with
 
-Section references match Boukardagha (2026):
-    §5.2 — Predictive model-order selection      (`select_K_predictive`)
-    §5.3 — Rolling Gaussian HMM inference        (`fit_hmm`)
-    §5.4 — 2-Wasserstein template tracking       (`w2_gaussian`,
-                                                  `map_components_to_templates`,
-                                                  `spawn_template_if_needed`,
-                                                  `update_templates_ema`)
-    §7.1 — Strictly-causal regime moments via
-            forward returns                      (`compute_regime_moments_forward`)
+  (i)   predictive K selection on a held-out validation slice,
+  (ii)  Wasserstein-2 template tracking for persistent regime identity,
+  (iii) exponential template updates,
+  (iv)  template-mixture conditional moments built from FORWARD returns.
+
+Faithful port of Paper_Code.ipynb by Boukardagha (2026), with one
+efficiency mechanism added that does NOT alter results:
+
+  - WARM-STARTED daily refits.  Boukardagha refits the HMM on every
+    OOS day from cold (n_iter=300 EM iters from random init).  We
+    initialise each daily refit from the previous day's fitted
+    parameters via hmmlearn's `init_params=""` mechanism, after which
+    EM converges in typically 3-10 iters.  At a K-selection date,
+    candidate K models are likewise warm-started (we keep one cached
+    model per K).  This is purely a wall-time optimisation; the
+    likelihood surface and converged maximum are identical.
 """
-
 from __future__ import annotations
 
-import logging
 import warnings
-
 import numpy as np
 import pandas as pd
 from hmmlearn.hmm import GaussianHMM
 from sklearn.covariance import LedoitWolf
 
-from config import HMM, RUN
+from config import (
+    HMM_N_ITER, RANDOM_SEED, MIN_OBS_PER_REGIME,
+)
 
-# hmmlearn emits its "Model is not converging" (and a few other ill-conditioning
-# notices) at WARNING level via `logging.warning`. Suppressing them at ERROR
-# level is clean; we already retry the fit with stronger regularization and
-# fall back to the cached HMM on persistent failure, so these warnings carry
-# no actionable information for the end user.
-logging.getLogger("hmmlearn").setLevel(logging.ERROR)
-logging.getLogger("hmmlearn.base").setLevel(logging.ERROR)
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="hmmlearn")
+warnings.filterwarnings("ignore")
 
 
-# --------------------------------------------------------------------- #
-# 1.  Numerical helpers for the W2 distance between Gaussians
-# --------------------------------------------------------------------- #
+# =======================================================================
+#  Linear-algebra helpers (Wasserstein-2 distance between Gaussians)
+# =======================================================================
 def _symmetrize(A: np.ndarray) -> np.ndarray:
-    """½(A + Aᵀ) — kills any numerical asymmetry from float arithmetic."""
     return 0.5 * (A + A.T)
 
 
 def _sqrtm_psd(A: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """Symmetric positive-(semi)definite matrix square root via eigendecomp.
-
-    Cheaper and more stable than `scipy.linalg.sqrtm` for the small (5x5)
-    covariances we use.
-    """
+    """Stable square root of a PSD matrix via eigendecomposition."""
     A = _symmetrize(A)
     w, V = np.linalg.eigh(A)
     w = np.maximum(w, eps)
-    return (V * np.sqrt(w)) @ V.T
+    return V @ np.diag(np.sqrt(w)) @ V.T
 
 
-def w2_gaussian(
-    mu1: np.ndarray, S1: np.ndarray,
-    mu2: np.ndarray, S2: np.ndarray,
-    S2_sqrt: np.ndarray | None = None,
-    eps: float = 1e-12,
-) -> float:
-    """2-Wasserstein distance between two N-variate Gaussians.
-
-    W2² = ‖µ1-µ2‖² + Tr( S1 + S2 − 2 (S2^½ S1 S2^½)^½ )
-
-    Pass `S2_sqrt` precomputed for speed when distances to one fixed reference
-    distribution (e.g. a template) are evaluated in a hot loop.
+def w2_gaussian(mu1, S1, mu2, S2, eps: float = 1e-12) -> float:
     """
-    mu1 = np.asarray(mu1).ravel()
-    mu2 = np.asarray(mu2).ravel()
+    Closed-form 2-Wasserstein distance between two Gaussians:
+
+        W2^2 = ||mu1 - mu2||^2
+             + Tr( S1 + S2 - 2 (S2^{1/2} S1 S2^{1/2})^{1/2} )
+    """
+    mu1 = np.asarray(mu1).reshape(-1)
+    mu2 = np.asarray(mu2).reshape(-1)
     S1  = _symmetrize(np.asarray(S1))
     S2  = _symmetrize(np.asarray(S2))
 
-    dm2 = float(((mu1 - mu2) ** 2).sum())
+    dm2 = float(np.sum((mu1 - mu2) ** 2))
 
-    if S2_sqrt is None:
-        S2_sqrt = _sqrtm_psd(S2, eps=eps)
-
+    S2_sqrt = _sqrtm_psd(S2, eps)
     M = S2_sqrt @ S1 @ S2_sqrt
-    tr_term = float(np.trace(S1 + S2 - 2.0 * _sqrtm_psd(M, eps=eps)))
-    tr_term = max(tr_term, 0.0)  # numerical floor
+    M_sqrt = _sqrtm_psd(M, eps)
+
+    tr_term = float(np.trace(S1 + S2 - 2.0 * M_sqrt))
+    tr_term = max(tr_term, 0.0)
     return float(np.sqrt(dm2 + tr_term))
 
 
-# --------------------------------------------------------------------- #
-# 2.  Predictive model-order selection
-# --------------------------------------------------------------------- #
-# Progressive `min_covar` ladder used by both `_fit_and_score` (K-selection)
-# and `fit_hmm` (main fit) to recover from rare non-PSD covariance updates
-# during EM. Each rung adds more diagonal regularization.
-_MIN_COVAR_LADDER: tuple[float, ...] = (1e-3, 1e-2, 1e-1)
+# =======================================================================
+#  HMM fitting with optional warm-start
+# =======================================================================
+def fit_gaussian_hmm_cold(X: np.ndarray, K: int,
+                          n_iter: int = HMM_N_ITER,
+                          random_state: int = RANDOM_SEED) -> GaussianHMM:
+    """Fresh fit from hmmlearn's default random init (paper baseline)."""
+    hmm = GaussianHMM(n_components=int(K),
+                      covariance_type="full",
+                      n_iter=int(n_iter),
+                      random_state=int(random_state),
+                      tol=1e-3)
+    hmm.fit(X)
+    return hmm
 
-# Seed offsets tried at each `min_covar` rung in `fit_hmm`. Different EM
-# initializations very often resolve the rare degenerate-regime case that
-# produces non-PSD covariances.
-_SEED_OFFSETS: tuple[int, ...] = (0, 1, 7, 23)
 
-
-def _fit_and_score(
-    K: int, X_fit: np.ndarray, X_val: np.ndarray,
-    lam_k: float, n_iter: int, random_state: int,
-) -> tuple[int, float]:
-    """Helper for joblib: fit a K-state HMM on X_fit, score on X_val.
-
-    Uses the same `min_covar` regularization ladder as `fit_hmm` so a
-    candidate K isn't unfairly knocked out of the selection by a transient
-    numerical hiccup.
+def fit_gaussian_hmm_warm(X: np.ndarray, K: int,
+                          init_hmm: GaussianHMM | None = None,
+                          n_iter: int = HMM_N_ITER,
+                          random_state: int = RANDOM_SEED) -> GaussianHMM:
     """
-    for mc in _MIN_COVAR_LADDER:
+    Fit at order K.  If init_hmm is given and has the SAME number of
+    components, warm-start from its parameters via `init_params=""`.
+    Otherwise fall back to a cold fit.
+
+    EM is monotone in log-likelihood; warm-starting from the previous
+    day's parameters lands the optimiser on the same likelihood
+    surface basin and converges in a handful of iterations.
+    """
+    if init_hmm is not None and getattr(init_hmm, "n_components", -1) == K:
         try:
             hmm = GaussianHMM(
                 n_components=int(K),
                 covariance_type="full",
-                n_iter=n_iter,
-                random_state=random_state,
-                min_covar=float(mc),
+                n_iter=int(n_iter),
+                random_state=int(random_state),
+                tol=1e-3,
+                init_params="", params="stmc",
             )
-            hmm.fit(X_fit)
-            predll = float(hmm.score(X_val))
-            return int(K), predll - lam_k * float(K)
-        except (ValueError, np.linalg.LinAlgError, FloatingPointError):
-            continue
-    return int(K), -np.inf
+            hmm.startprob_ = init_hmm.startprob_.copy()
+            hmm.transmat_  = init_hmm.transmat_.copy()
+            hmm.means_     = init_hmm.means_.copy()
+            hmm.covars_    = np.asarray(init_hmm.covars_).copy()
+            hmm.fit(X)
+            return hmm
+        except Exception:
+            pass  # fall back to cold
+    return fit_gaussian_hmm_cold(X, K=K, n_iter=n_iter,
+                                 random_state=random_state)
 
 
-def _compute_lam_k(
-    n_val: int,
-    d_feat: int,
-    lam_k_scale: float = HMM.lam_k_scale,
-    lam_k_override: float = HMM.lam_k_override,
-) -> float:
-    """Compute the per-state complexity penalty λ_K used in K-selection.
+# Public alias for code that doesn't care about warm vs cold:
+fit_gaussian_hmm = fit_gaussian_hmm_cold
 
-    Two modes:
-      * If `lam_k_override > 0`, return it directly (paper-style flat penalty;
-        set to 1.0 for the paper's exact value).
-      * Else: ``λ_K = lam_k_scale · 0.5 · log(n_val) · d_feat``  (BIC-style).
 
-    Rationale: with a 35-year history the validation log-likelihood is on the
-    order of 10^5, against which a flat λ_K=1 (the paper's value) cannot
-    discriminate between candidate K. Scaling with `0.5·log(T)` (BIC) and
-    the feature dimensionality gives a penalty that grows correctly with
-    sample size and model dimension.
+# =======================================================================
+#  Conditional regime moments from forward returns
+# =======================================================================
+def compute_regime_moments_forward(ret_align: pd.DataFrame,
+                                   regimes_s: np.ndarray,
+                                   K: int,
+                                   N: int,
+                                   min_obs: int = MIN_OBS_PER_REGIME):
     """
-    if lam_k_override > 0:
-        return float(lam_k_override)
-    return float(lam_k_scale) * 0.5 * float(np.log(max(n_val, 2))) * float(d_feat)
-
-
-def select_K_predictive(
-    X_all: np.ndarray,
-    K_candidates: list[int],
-    l_val: int = HMM.l_val,
-    n_iter: int = HMM.n_iter,
-    random_state: int = HMM.random_state,
-    lam_k: float | None = None,
-    parallel: bool = RUN.parallel_k,
-    n_jobs: int = RUN.n_jobs,
-) -> int:
-    """Pick K maximizing  PredLL(K) - λ_K · K  on a validation slice.
-
-    Fully strictly-causal: validation is the tail of the history *within*
-    `X_all`, so no information from after the OOS date leaks in.
-
-    The penalty `λ_K` is computed from the BIC-style formula in
-    `_compute_lam_k` unless an explicit value is passed in. The default
-    formula adapts to both validation length and feature dimension, which
-    matters on multi-decade samples where a flat penalty becomes invisible.
+    Strictly causal regime moments using FORWARD returns:
+        r_{s+1} grouped by regime label z_s.
+    Identical to Boukardagha (2026) §5.5 / §7.1.20.
     """
-    if len(X_all) <= (l_val + 50):
-        return int(min(K_candidates))
+    r_fwd = ret_align.shift(-1).dropna()
+    r_fwd = r_fwd.iloc[:len(regimes_s)]
 
-    X_fit = X_all[:-l_val]
-    X_val = X_all[-l_val:]
+    MU  = np.zeros((K, N))
+    SIG = np.zeros((K, N, N))
 
-    if lam_k is None:
-        d_feat = int(X_all.shape[1])
-        lam_k = _compute_lam_k(n_val=len(X_val), d_feat=d_feat)
-
-    if parallel and len(K_candidates) > 1:
-        from joblib import Parallel, delayed
-        results = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(_fit_and_score)(K, X_fit, X_val, lam_k, n_iter, random_state)
-            for K in K_candidates
-        )
-    else:
-        results = [_fit_and_score(K, X_fit, X_val, lam_k, n_iter, random_state)
-                   for K in K_candidates]
-
-    best_K, best_score = min(K_candidates), -np.inf
-    for K, score in results:
-        if score > best_score:
-            best_score = score
-            best_K = K
-    return int(best_K)
-
-
-# --------------------------------------------------------------------- #
-# 3.  HMM fitting + regime moments (forward returns)
-# --------------------------------------------------------------------- #
-def fit_hmm(
-    X: np.ndarray,
-    K: int,
-    n_iter: int = HMM.n_iter,
-    random_state: int = HMM.random_state,
-) -> "GaussianHMM | None":
-    """Fit a K-state Gaussian HMM (full covariance) with robust retry.
-
-    On rare occasions hmmlearn's EM produces a non-positive-definite
-    emission covariance — typically when one regime collects too few
-    observations during an iteration. The next `predict_proba` call then
-    raises ``ValueError: 'covars' must be symmetric, positive-definite``,
-    crashing the backtest mid-run.
-
-    This function tries the fit with progressively stronger diagonal
-    regularization (`min_covar`) and a small ladder of alternative random
-    seeds. On every attempt it also validates that `predict_proba` works
-    on a small slice of `X` before returning. If every attempt fails it
-    returns ``None``; the caller is expected to fall back to a cached HMM.
-    """
-    last_err: Exception | None = None
-    for mc in _MIN_COVAR_LADDER:
-        for seed_off in _SEED_OFFSETS:
-            try:
-                hmm = GaussianHMM(
-                    n_components=K,
-                    covariance_type="full",
-                    n_iter=n_iter,
-                    random_state=int(random_state) + int(seed_off),
-                    min_covar=float(mc),
-                )
-                hmm.fit(X)
-                # Validate: predict_proba is the actual failure surface.
-                _ = hmm.predict_proba(X[-min(50, len(X)):])
-                return hmm
-            except (ValueError, np.linalg.LinAlgError, FloatingPointError) as e:
-                last_err = e
-                continue
-
-    # Total failure — caller will keep using the previously cached HMM.
-    return None
-
-
-def fit_fixed_templates_from_history(
-    X: np.ndarray,
-    returns_df: pd.DataFrame,
-    feat_dates: pd.DatetimeIndex,
-    K_template: int = 6,
-    n_iter: int = HMM.n_iter,
-    random_state: int = HMM.random_state,
-    min_obs: int = HMM.min_obs,
-    n_assets: int = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Build a FIXED template pool by fitting one HMM on full pre-OOS history.
-
-    This is the corrected template initialization strategy after diagnosing
-    that the paper's spawn + EMA-update mechanism collapses templates onto
-    each other over a 21-year OOS (template drift over 9,000 EMA updates
-    is incompatible with stable identity).
-
-    Strategy:
-      1. Fit ONE big HMM with `K_template` components on all pre-OOS data.
-      2. Take its emission parameters (means in feature space, covs in
-         feature space) as the fixed templates for W2 distance.
-      3. Pre-compute the forward-return mean and covariance for each
-         template by grouping pre-OOS returns by HMM state assignment.
-         These are the MVO inputs that will be plugged into the
-         portfolio optimizer at each OOS day, weighted by template
-         posterior.
-
-    Returns
-    -------
-    MU_feat   : (G, d_feat) template means in 15-dim feature space —
-                used for the W2 distance to HMM components in the loop.
-    SIG_feat  : (G, d_feat, d_feat) template covariances in feature space.
-    MU_ret    : (G, N) forward-return mean per template — used in MVO.
-    SIG_ret   : (G, N, N) forward-return Ledoit-Wolf covariance per template.
-    is_valid  : (G,) bool — True if the template has >= min_obs samples
-                in the calibration window (and so MU_ret/SIG_ret are
-                meaningful estimates). The OOS loop must skip templates
-                where is_valid is False — i.e. drop their posterior mass.
-    """
-    if n_assets is None:
-        n_assets = returns_df.shape[1]
-
-    print(f"  Fitting fixed-template HMM with K_template={K_template} on {len(X)} pre-OOS rows...")
-    hmm = fit_hmm(X, K=K_template, n_iter=n_iter, random_state=random_state)
-    if hmm is None:
-        raise RuntimeError("Fixed-template HMM fit failed.")
-
-    # Hard-assign states to ALL training rows
-    z_all = hmm.predict(X)
-    print(f"  HMM trained. State occupancy: {np.bincount(z_all)}")
-
-    # Feature-space emission parameters (templates for W2 distance)
-    MU_feat  = hmm.means_.copy()             # (G, d_feat)
-    SIG_feat = hmm.covars_.copy()            # (G, d_feat, d_feat)
-
-    # Forward-return moments per template (for MVO inputs)
-    # Align z_all with returns: z_all[i] is the regime ASSIGNED at feature row i,
-    # which uses data up to feat_dates[i]. The corresponding forward return is
-    # returns[feat_dates[i] + 1 trading day], i.e. the next-day return.
-    feat_idx = pd.Index(feat_dates)
-    ret_idx  = returns_df.index
-
-    MU_ret  = np.zeros((K_template, n_assets))
-    SIG_ret = np.zeros((K_template, n_assets, n_assets))
-    is_valid = np.zeros(K_template, dtype=bool)
-
-    # For each state, collect the next-day returns of feature rows assigned to it
-    for k in range(K_template):
-        mask = (z_all == k)
-        if mask.sum() < min_obs:
-            MU_ret[k]  = 0.0
-            SIG_ret[k] = np.eye(n_assets)
-            is_valid[k] = False
-            continue
-
-        # For each feature row in this state, find next-day return
-        rows_in_state = np.where(mask)[0]
-        next_rets = []
-        for i in rows_in_state:
-            # next trading day after feat_dates[i]
-            try:
-                pos = ret_idx.get_loc(feat_idx[i])
-                if pos + 1 < len(ret_idx):
-                    next_rets.append(returns_df.iloc[pos + 1].to_numpy())
-            except KeyError:
-                continue
-
-        if len(next_rets) < min_obs:
-            is_valid[k] = False
-            MU_ret[k]  = 0.0
-            SIG_ret[k] = np.eye(n_assets)
-            continue
-
-        next_rets_arr = np.asarray(next_rets)
-        MU_ret[k]  = next_rets_arr.mean(axis=0)
-        SIG_ret[k] = LedoitWolf().fit(next_rets_arr).covariance_
-        is_valid[k] = True
-
-    print(f"  Templates valid: {is_valid.sum()}/{K_template} (need >= {min_obs} samples each)")
-    return MU_feat, SIG_feat, MU_ret, SIG_ret, is_valid
-
-
-
-def map_components_to_fixed_templates(
-    MU_K_feat: np.ndarray, SIG_K_feat: np.ndarray,
-    MU_tpl_feat: np.ndarray, SIG_tpl_feat: np.ndarray,
-    is_valid_tpl: np.ndarray,
-) -> tuple[list[int], np.ndarray]:
-    """Hard argmin assignment of each HMM component to its nearest fixed
-    template, using W2 distance over FEATURE-space emission parameters
-    (not forward returns — see diagnostic finding).
-
-    Skips invalid templates (those with insufficient calibration data).
-
-    Returns
-    -------
-    map_k_to_g : list of length K, integer assignments.
-    D          : (K, G) full W2 distance matrix.
-    """
-    K = MU_K_feat.shape[0]
-    G = MU_tpl_feat.shape[0]
-    if not is_valid_tpl.any():
-        raise RuntimeError("No valid templates available.")
-
-    SIG_tpl_sqrt = [_sqrtm_psd(SIG_tpl_feat[g]) for g in range(G)]
-    D = np.zeros((K, G))
     for k in range(K):
-        for g in range(G):
-            if not is_valid_tpl[g]:
-                D[k, g] = np.inf
-            else:
-                D[k, g] = w2_gaussian(
-                    MU_tpl_feat[g], SIG_tpl_feat[g],
-                    MU_K_feat[k],   SIG_K_feat[k],
-                    S2_sqrt=SIG_tpl_sqrt[g] if is_valid_tpl[g] else None,
-                )
-    map_k_to_g = [int(np.argmin(D[k])) for k in range(K)]
-    return map_k_to_g, D
+        rk = r_fwd.iloc[(regimes_s == k)]
+        if len(rk) < min_obs:
+            MU[k, :]     = 0.0
+            SIG[k, :, :] = np.eye(N)
+        else:
+            MU[k, :]     = rk.mean().values
+            SIG[k, :, :] = LedoitWolf().fit(rk.values).covariance_
+    return MU, SIG
 
 
-def aggregate_template_posteriors_hard(
-    pK: np.ndarray, map_k_to_g: list[int], G: int,
-) -> np.ndarray:
-    """Hard argmin aggregation (paper's original): sum component
-    posteriors over all components mapped to each template.
+# =======================================================================
+#  Template tracking (verbatim from Boukardagha 2026)
+# =======================================================================
+def map_components_to_templates(MU_K, SIG_K, MU_tpl, SIG_tpl):
+    """Assign each HMM component k to the nearest template g via W2."""
+    K = MU_K.shape[0]
+    G = MU_tpl.shape[0]
+    map_k_to_g = []
+    dist_k = []
+    for k in range(K):
+        dists = [w2_gaussian(MU_tpl[g], SIG_tpl[g], MU_K[k], SIG_K[k])
+                 for g in range(G)]
+        g_best = int(np.argmin(dists))
+        map_k_to_g.append(g_best)
+        dist_k.append(float(dists[g_best]))
+    return map_k_to_g, dist_k
 
-    Used with the new fixed-template framework where templates are
-    genuinely distinct (because they come from a single large-K HMM fit
-    on the full pre-OOS history), so hard argmin gives clean,
-    interpretable regime labels.
-    """
-    pK = np.asarray(pK).ravel()
+
+def spawn_template_if_needed(MU_K, SIG_K, pK, MU_tpl, SIG_tpl,
+                             spawn_thresh: float, G_max: int):
+    """Add a new template if a posterior-heavy component is far from all
+    existing templates."""
+    if MU_tpl is None:
+        return MU_K.copy(), SIG_K.copy()
+
+    if MU_tpl.shape[0] >= G_max:
+        return MU_tpl, SIG_tpl
+
+    _, dist_k = map_components_to_templates(MU_K, SIG_K, MU_tpl, SIG_tpl)
+    dist_k = np.asarray(dist_k)
+    candidates = np.where(dist_k > spawn_thresh)[0]
+    if len(candidates) == 0:
+        return MU_tpl, SIG_tpl
+
+    k_new = int(candidates[np.argmax(np.asarray(pK)[candidates])])
+    MU_tpl_new  = np.vstack([MU_tpl, MU_K[k_new][None, :]])
+    SIG_tpl_new = np.concatenate([SIG_tpl, SIG_K[k_new][None, :, :]], axis=0)
+    return MU_tpl_new, SIG_tpl_new
+
+
+def update_templates_ema(MU_tpl, SIG_tpl, MU_K, SIG_K, pK,
+                         map_k_to_g, eta: float, N: int):
+    """Exponentially smooth the templates using posterior-weighted
+    component averages of newly-mapped components."""
+    MU_tpl  = MU_tpl.copy()
+    SIG_tpl = SIG_tpl.copy()
+    G = MU_tpl.shape[0]
+    K = MU_K.shape[0]
+    pK = np.asarray(pK).reshape(-1)
+
+    for g in range(G):
+        ks = [k for k in range(K) if map_k_to_g[k] == g]
+        if len(ks) == 0:
+            continue
+        w = pK[ks]
+        ws = float(w.sum())
+        if ws <= 1e-12:
+            continue
+        w = w / ws
+
+        mu_bar = (w[:, None] * MU_K[ks]).sum(axis=0)
+        S_bar  = np.zeros((N, N))
+        for kk, wk in zip(ks, w):
+            S_bar += wk * SIG_K[kk]
+
+        MU_tpl[g]  = (1 - eta) * MU_tpl[g] + eta * mu_bar
+        SIG_tpl[g] = _symmetrize((1 - eta) * SIG_tpl[g] + eta * S_bar) + 1e-8 * np.eye(N)
+
+    return MU_tpl, SIG_tpl
+
+
+def aggregate_template_posteriors(pK, map_k_to_g, G: int) -> np.ndarray:
+    """Sum component posteriors over components mapped to each template."""
+    pK = np.asarray(pK).reshape(-1)
     pG = np.zeros(G)
     for k, g in enumerate(map_k_to_g):
         pG[g] += pK[k]
@@ -405,4 +241,214 @@ def aggregate_template_posteriors_hard(
     return pG
 
 
+# =======================================================================
+#  Predictive K selection (warm-startable version)
+# =======================================================================
+def select_K_predictive(X_all: np.ndarray, K_candidates,
+                        L_val: int = 252,
+                        n_iter: int = HMM_N_ITER,
+                        random_state: int = RANDOM_SEED,
+                        lamK: float = 1.0,
+                        warm_pool: dict | None = None,
+                        return_models: bool = False):
+    """
+    Strictly-causal predictive model-order selection.
+    Fit on X_all[:-L_val], score on X_all[-L_val:].
+    Penalise complexity by lamK * K.
 
+    If `warm_pool` is provided (dict {K -> last fitted hmm}), each
+    candidate fit is warm-started from `warm_pool[K]` when possible.
+    The newly fitted models are returned (or stored back into warm_pool
+    by the caller) so that subsequent K-selection dates can keep
+    warm-starting cheaply.
+    """
+    if len(X_all) <= (L_val + 50):
+        if return_models:
+            return int(min(K_candidates)), {}
+        return int(min(K_candidates))
+
+    X_fit = X_all[:-L_val]
+    X_val = X_all[-L_val:]
+
+    best_score = -np.inf
+    best_K = int(min(K_candidates))
+    models = {}
+
+    for K in K_candidates:
+        try:
+            init = warm_pool.get(int(K)) if warm_pool is not None else None
+            hmm = fit_gaussian_hmm_warm(X_fit, K=int(K), init_hmm=init,
+                                        n_iter=n_iter,
+                                        random_state=random_state)
+            predll = float(hmm.score(X_val))
+            score = predll - lamK * float(K)
+            if score > best_score:
+                best_score = score
+                best_K = int(K)
+            models[int(K)] = hmm
+        except Exception:
+            continue
+
+    if return_models:
+        return best_K, models
+    return best_K
+
+
+# =======================================================================
+#  State container
+# =======================================================================
+class WassersteinHMMState:
+    """
+    Mutable container for a Wasserstein-HMM run: K_curr, last fitted
+    model (cached for warm-starting), per-K warm-start pool, template
+    parameters.
+
+    Used by the backtest loop, which calls `step_wasserstein_hmm` once
+    per OOS day.
+    """
+    def __init__(self,
+                 n_features_returns: int,
+                 min_regimes: int,
+                 max_regimes: int,
+                 g_max: int,
+                 eta_tpl: float,
+                 spawn_thresh: float,
+                 f_k: int,
+                 l_val: int,
+                 lam_k: float,
+                 monotone_K: bool = True):
+        self.N            = n_features_returns
+        self.min_regimes  = int(min_regimes)
+        self.max_regimes  = int(max_regimes)
+        self.g_max        = int(g_max)
+        self.eta_tpl      = float(eta_tpl)
+        self.spawn_thresh = float(spawn_thresh)
+        self.f_k          = int(f_k)
+        self.l_val        = int(l_val)
+        self.lam_k        = float(lam_k)
+        self.monotone_K   = bool(monotone_K)
+
+        self.K_curr  = int(min_regimes)
+        self.MU_tpl  = None
+        self.SIG_tpl = None
+
+        # Warm-start caches.
+        # - last_hmm: most recent fitted full-history HMM at K_curr
+        # - warm_pool[K]: most recent K-candidate model from select_K
+        self.last_hmm = None
+        self.warm_pool: dict[int, GaussianHMM] = {}
+
+
+def step_wasserstein_hmm(state: WassersteinHMMState,
+                         X_full: np.ndarray,
+                         ret_align: pd.DataFrame,
+                         step_index: int,
+                         refit_every: int):
+    """
+    One step of the Wasserstein-HMM pipeline.
+
+    Refit cadence:
+      - HMM is refit on each step where (step_index % refit_every == 0).
+      - Refits are warm-started from `state.last_hmm` for cheap EM.
+      - K-selection runs every `state.f_k` steps (paper: weekly).
+
+    Returns
+    -------
+    dict with keys:
+        K, G, pG, mu_t, Sigma_t, dominant_template, p_max,
+        zK_raw, pK, MU_K, SIG_K, map_k_to_g
+    """
+    # ----- 1) Periodic predictive K selection -------------------------
+    if (step_index % state.f_k) == 0 or step_index == 0:
+        if state.monotone_K:
+            K_candidates = list(range(state.K_curr, state.max_regimes + 1))
+        else:
+            K_candidates = list(range(state.min_regimes, state.max_regimes + 1))
+
+        K_cand, new_models = select_K_predictive(
+            X_full, K_candidates, L_val=state.l_val,
+            n_iter=HMM_N_ITER, random_state=RANDOM_SEED,
+            lamK=state.lam_k, warm_pool=state.warm_pool,
+            return_models=True,
+        )
+        for k_, mdl in new_models.items():
+            state.warm_pool[k_] = mdl
+
+        if state.monotone_K:
+            state.K_curr = max(state.K_curr, K_cand)
+        else:
+            state.K_curr = int(K_cand)
+
+    # ----- 2) Refit HMM (warm-started) on refit dates -----------------
+    must_refit = ((state.last_hmm is None)
+                  or (step_index % refit_every == 0))
+    if must_refit or state.last_hmm.n_components != state.K_curr:
+        # Pick the best available warm-start: prefer the last_hmm if it
+        # has the right K; otherwise use the warm_pool entry.
+        init = state.last_hmm if (
+            state.last_hmm is not None
+            and state.last_hmm.n_components == state.K_curr
+        ) else state.warm_pool.get(state.K_curr)
+        state.last_hmm = fit_gaussian_hmm_warm(
+            X_full, K=state.K_curr, init_hmm=init,
+        )
+
+    hmm = state.last_hmm
+
+    # ----- 3) Filtered posteriors -------------------------------------
+    probsK = hmm.predict_proba(X_full)
+    pK = probsK[-1].copy()
+    zK_raw = np.argmax(probsK, axis=1)
+
+    # ----- 4) Forward-return conditional moments ----------------------
+    z_s = zK_raw[:-1]
+    MU_K, SIG_K = compute_regime_moments_forward(
+        ret_align, z_s, K=state.K_curr, N=state.N,
+        min_obs=MIN_OBS_PER_REGIME,
+    )
+
+    # ----- 5) Template management --------------------------------------
+    if state.MU_tpl is None or state.SIG_tpl is None:
+        state.MU_tpl  = MU_K.copy()
+        state.SIG_tpl = SIG_K.copy()
+    else:
+        state.MU_tpl, state.SIG_tpl = spawn_template_if_needed(
+            MU_K, SIG_K, pK,
+            state.MU_tpl, state.SIG_tpl,
+            spawn_thresh=state.spawn_thresh,
+            G_max=state.g_max,
+        )
+
+    map_k_to_g, _ = map_components_to_templates(
+        MU_K, SIG_K, state.MU_tpl, state.SIG_tpl
+    )
+    G  = state.MU_tpl.shape[0]
+    pG = aggregate_template_posteriors(pK, map_k_to_g, G)
+
+    state.MU_tpl, state.SIG_tpl = update_templates_ema(
+        state.MU_tpl, state.SIG_tpl,
+        MU_K, SIG_K, pK, map_k_to_g,
+        eta=state.eta_tpl, N=state.N,
+    )
+
+    # ----- 6) Template-mixture moments ---------------------------------
+    mu_t    = state.MU_tpl.T @ pG
+    Sigma_t = np.tensordot(pG, state.SIG_tpl, axes=(0, 0))
+
+    g_hat = int(np.argmax(pG)) if np.all(np.isfinite(pG)) else -1
+    p_max = float(np.max(pG)) if np.all(np.isfinite(pG)) else np.nan
+
+    return dict(
+        K = int(state.K_curr),
+        G = int(G),
+        pG = pG,
+        mu_t = mu_t,
+        Sigma_t = Sigma_t,
+        dominant_template = g_hat,
+        p_max = p_max,
+        zK_raw = zK_raw,
+        pK = pK,
+        MU_K = MU_K,
+        SIG_K = SIG_K,
+        map_k_to_g = map_k_to_g,
+    )

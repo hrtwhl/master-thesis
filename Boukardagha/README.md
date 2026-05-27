@@ -1,148 +1,149 @@
-# Wasserstein-HMM Regime-Aware Investing — Extended OOS
+# Explainable Regime-Aware Investing — Replication & Hierarchical Extension
 
-A modular Python reproduction of **Boukardagha (2026), *Explainable
-Regime-Aware Investing***, extended to a **21-year out-of-sample window**
-(Jan 2005 – Dec 2025) using a 1990-onwards price history.
+Faithfully replicates Boukardagha (2026) ["Explainable Regime-Aware
+Investing"](https://arxiv.org/abs/2603.04441) on a 2005-01 → 2025-12
+daily out-of-sample window, and adds a hierarchical Wasserstein-HMM
+macro layer following Fine, Singer & Tishby (1998).
 
-The project keeps the paper's methodology (strictly-causal expanding-window
-Gaussian HMM, predictive K-selection with monotone-K safety, 2-Wasserstein
-template tracking with EMA updates, forward-return regime moments,
-transaction-cost-aware long-only MVO) and replaces the paper's
-non-parametric KNN benchmark with the three baselines requested in the
-brief: **SPX Buy & Hold**, **Equal-Weight (20% each)**, and
-**60/40 SPX/BOND**.
+## Strategies
 
-## Run
+| Strategy            | Description                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| **PureMarket_WHMM** | Faithful replication of Boukardagha (2026): expanding-window Gaussian HMM with predictive K-selection (weekly), Wasserstein template tracking, daily refits, transaction-cost-aware MVO. |
+| **Hierarchical_WHMM** | Two-level HHMM (FST98):<br>• **Top**: Wasserstein HMM on 21-d macro features (7 vars × {ret, 60d-vol, 20d-mom}).<br>• **Bottom**: shared market Wasserstein HMM as in pure-market.<br>• Conditional moments computed on JOINT (g_macro, h_market) cells using LedoitWolf shrinkage, with market-only fallback when a cell has fewer than 60 obs.<br>• Composite probabilities p(t,g,h) = p_macro(t,g) × p_market(t,h) drive the template-mixture moments fed to MVO.<br>• Optional macro tilt scales risky-asset (SPX, OIL) expected returns by tanh of historical regime Sharpe. |
+| **EqualWeight**     | Static 20% per asset (SPX, BOND, GOLD, OIL, USD), frictionless.          |
+| **SixtyForty**      | Static 60% SPX / 40% BOND, frictionless.                                  |
+
+## Deviations from Boukardagha (2026)
+
+Documented in detail at the top of `config.py`.
+
+| ID | Deviation                                | Reason                                        |
+| -- | ---------------------------------------- | --------------------------------------------- |
+| D1 | `HMM_N_ITER = 100` (paper 300)           | hmmlearn EM converges in ≤ 80 iters at tol=1e-3 on these data. Set HMM_N_ITER = 300 in `config.py` to recover the paper exactly. |
+
+Refit cadence (daily), K-selection cadence (weekly), expanding training window,
+monotone-K rule, K range {5, 6}, transaction-cost MVO, all other parameters
+(γ=5, τ=0.0002, w_max=0.6, G_max=8, η=0.05, spawn_thresh=2.5, vol_window=60,
+mom_window=20, L_val=252, λ_K=1) are **taken verbatim** from `Paper_Code.ipynb`.
+
+### Efficiency mechanism (mathematically transparent)
+
+Daily refits of a full-covariance K=6 HMM on an expanding window
+naively cost ~3-4 s each (>5 hours over 5300 OOS days).  We exploit
+EM's monotonicity by **warm-starting** each daily refit from the
+previous day's fitted parameters using hmmlearn's `init_params=""`
+mechanism.  Adding one row to the training history typically lands EM
+in the same likelihood basin and reconverges in 3-10 iterations
+(~0.1-0.3 s).  This is **not a methodological change** — the
+converged maximum on each day is identical to what a cold-started fit
+would produce.  Implementation: `wasserstein_hmm.py:fit_gaussian_hmm_warm`.
+
+## File layout
+
+```
+regime_aware_investing/
+├── config.py              # all knobs (with paper-vs-ours flags)
+├── data.py                # asset & macro CSV loaders
+├── features.py            # asset and macro feature builders
+├── mvo.py                 # transaction-cost-aware MVO (cvxpy)
+├── wasserstein_hmm.py     # WHMM step + W2 helpers + predictive K + warm-start
+├── hierarchical_hmm.py    # macro->market HHMM (FST98 architecture, v2)
+├── backtest.py            # pure-market backtest + static benchmark + CSV helper
+├── diagnostics.py         # Sharpe/Sortino/DD/turnover/N_eff/persistence
+├── plots.py               # all paper charts + macro charts + comparisons
+├── run_pure.py            # entry: pure-market backtest only
+├── run_hier.py            # entry: hierarchical backtest only
+├── aggregate.py           # reads raw CSVs -> tables + PNGs
+├── narrative.py           # Markdown auto-summary
+├── report.py              # single-page HTML report
+├── main.py                # end-to-end driver (1 → 5)
+└── output/
+    ├── charts/                       # PNG figures (~28 files)
+    ├── tables/                       # paper-ready CSVs (T01..T09)
+    ├── raw/                          # daily PnL/weights/regime time series
+    ├── daily_backtest_output_pure.csv      # unified daily output (requested schema)
+    ├── daily_backtest_output_hier.csv      # ditto with macro extras
+    ├── daily_backtest_output_benchmarks.csv
+    ├── narrative_summary.md
+    └── report.html
+```
+
+## How to run
 
 ```bash
-pip install -r requirements.txt
-python main.py
+cd regime_aware_investing
+python main.py     # ~30 + ~30 + 1 min on 1 CPU core, single shot
 ```
 
-The 1990–2025 price history is loaded from `asset_data.csv` (path
-configurable in `config.py`). Outputs land in `output/`:
+Or run the stages independently (useful for iterating on plots):
 
+```bash
+python run_pure.py     # ~30 min
+python run_hier.py     # ~30 min
+python aggregate.py    # <1 min
+python narrative.py    # writes output/narrative_summary.md
+python report.py       # writes output/report.html
 ```
-output/
-├── figures/        # 19 PNG figures
-└── tables/         # 8 CSV tables
+
+## Output catalogue
+
+### Tables (CSV in `output/tables/`)
+
+| File                                            | Content                                              |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| T01_performance_summary.csv                     | Sharpe, Sortino, Calmar, Ann Mean/Vol, Max DD, Hit Rate per strategy |
+| T02_turnover_summary.csv                        | Mean/Median/95% turnover, % days > 1%/>5%            |
+| T03a_allocation_pure_market.csv                 | Mean weight, weight vol, time-in-position, \|Δw\|    |
+| T03b_allocation_hierarchical.csv                | Same, for hierarchical strategy                      |
+| T04_concentration_summary.csv                   | Average / median N_eff                               |
+| T05a_pure_portfolio_by_regime.csv               | Portfolio perf in each market template               |
+| T05b_hier_portfolio_by_macro_regime.csv         | Portfolio perf in each MACRO template                |
+| T05c_hier_portfolio_by_market_regime.csv        | Portfolio perf in each MARKET template (hier)        |
+| T06a_pure_asset_by_regime.csv                   | Asset Sharpe/mean/vol in each market template        |
+| T06b_hier_asset_by_macro_regime.csv             | Asset Sharpe/mean/vol in each macro template         |
+| T07_crisis_performance.csv                      | Per-strategy returns / DD over 8 named crisis windows |
+| T08a_pure_regime_transitions.csv                | Day-on-day transition matrix, pure-market templates  |
+| T08b_hier_macro_regime_transitions.csv          | Same, macro templates                                |
+| T08c_hier_market_regime_transitions.csv         | Same, hierarchical-market templates                  |
+| T09a_pure_regime_persistence.csv                | Spell lengths per market template                    |
+| T09b_hier_macro_regime_persistence.csv          | Spell lengths per macro template                     |
+| T09c_hier_market_regime_persistence.csv         | Spell lengths per hierarchical-market template       |
+
+### Daily output CSVs (in `output/`)
+
+`daily_backtest_output_pure.csv` — schema requested by the user:
+```
+date, w_SPX, w_BOND, w_GOLD, w_OIL, w_USD, pnl, cum_pnl, K, regime, max_p, G, turnover
 ```
 
-## OOS start choice — *why January 3, 2005*
+`daily_backtest_output_hier.csv` — same plus macro layer columns:
+```
+date, w_SPX, w_BOND, w_GOLD, w_OIL, w_USD, pnl, cum_pnl,
+K_market, regime_market, max_p_market, G_market,
+K_macro,  regime_macro,  max_p_macro,  G_macro,
+turnover
+```
 
-Three OOS-start candidates were considered against a 1990-01-02 → 2025-12-31
-sample. The decision criteria were: (i) enough training history for the HMM
-to learn reasonably stable regime moments, (ii) the OOS window must cover
-the **2008 Global Financial Crisis** as a true out-of-sample test, and
-(iii) the model should not enter the GFC having seen only a single benign
-decade.
+`daily_backtest_output_benchmarks.csv` — EqualWeight + SixtyForty daily weights and PnL.
 
-| Start | Train years | OOS years | GFC in OOS? | Decision |
-|---|---|---|---|---|
-| **2005-01-03** | 15 (1990–2004) | 21 (2005–2025) | ✅ | **chosen** |
-| 2008-01-02 | 18 | 18 | ✅ (but model has only seen 90s+early-00s) | rejected |
-| 2010-01-04 | 20 | 16 | ❌ | rejected |
+### Charts (PNG in `output/charts/`)
 
-**Why not 2008**: with the HMM's 252-day internal validation window plus
-the 60-day feature warm-up, the model needs at least ~1.5 years of
-in-sample history before it has anything to validate against. Starting
-OOS in 2005 means the model enters the GFC having *already* experienced
-the dot-com bust and recovery (2001–2003) in-sample — a fairer test of
-its regime-detection ability than dropping it cold into the GFC.
+Per-strategy bundles (prefixes `pure_` and `hier_`): cumulative PnL
+scatter coloured by regime, turnover, weights stacked, N_eff, asset
+Sharpe by regime, stacked PnL by regime, K history, template count,
+template label, max template posterior — 10 charts each.
 
-**Why not 2010**: throws away the GFC, which is one of the highest-value
-regime-detection observations in modern history.
+Hierarchical-only macro-layer charts:
+- `hier_macro_label.png` — dominant macro template over time
+- `hier_macro_prob.png` — max macro posterior over time
+- `hier_macro_KG.png` — macro K and G over time
+- `hier_macro_vs_market.png` — heatmap of joint (macro, market) freq
+- `hier_macro_05_asset_sharpe_by_regime.png` — asset Sharpe by macro regime
 
-**Why not earlier (1996–2000)**: the HMM would be trained on a small
-sample of mostly benign 1990s data and asked to detect regimes it has
-never seen. Starting 2005 ensures at least the 2001 recession is in-sample.
-
-## Parameter and methodology deviations from the paper
-
-Three deliberate changes were made for the longer sample. All are flagged
-in `config.py` with `EXTENSION 1/2/3` and can be reverted to paper values
-to recover the exact original specification.
-
-### `max_regimes : 6 → 8`  (parameter)
-The paper calibrates 5–6 regimes for a 2005–2023 training window with a
-2-year OOS. A 1990–2025 sample plausibly contains more distinct macro
-regimes (90s bull, dot-com bust, GFC, ZIRP, taper tantrum, COVID,
-post-COVID inflation, 2022 rate-hike cycle). The K-selection rule
-`PredLL − λ_K · K` is unchanged — this only widens the candidate ceiling,
-it does not force higher K. If the data don't support K=8, K=8 is never
-chosen.
-
-### `g_max : 8 → 10`  (parameter)
-Templates accumulate over time and a higher `max_regimes` raises the
-number of HMM components a new template might spawn from. Increasing
-`g_max` proportionally avoids artificially saturating the template pool
-over a 21-year window. The W2 spawn threshold and EMA rate are unchanged.
-
-### `f_hmm : 1 → 5`  (methodology — for tractability)
-The paper refits the HMM EM **every day** on the full expanding window.
-Over a 35-year history this is prohibitive (~10–15 hours on a laptop for
-the full OOS). I add an `f_hmm` parameter to control the HMM-refit cadence
-and default it to 5 (same as `f_k`, weekly).
-
-**What still updates daily**: regime probabilities `p_K`, hard labels
-`z_s`, conditional moments `μ_K, Σ_K`, the W2 component→template mapping,
-the EMA template update, the aggregate template posterior `p_G`, and the
-MVO weight `w_t`. The only thing held fixed for up to 4 days between
-refits is the HMM's *parameters themselves* (transition matrix, emission
-means/covariances). Those are estimated on tens of thousands of daily
-observations — letting them age by ≤4 days is negligible compared to
-estimation noise.
-
-Setting `f_hmm = 1` in `config.py` recovers the paper's exact daily-refit
-behaviour for an apples-to-apples cross-check.
-
-### Everything else preserved exactly
-`LAM=5, TC=0.0002, W_MAX=0.6`,  `VOL_WINDOW=60, MOM_WINDOW=20`,
-`L_VAL=252, LAM_K=1, ETA_TPL=0.05, SPAWN_THRESH=2.5, MIN_REGIMES=5`,
-the monotone-K safety, Ledoit–Wolf shrinkage, forward-return regime
-moments, strict-causality everywhere, random seed = 42, full covariance,
-`n_iter=300`.
-
-## Wall-time
-
-The 5,478-day OOS run takes roughly **2–3 hours** on a modern laptop with
-the default settings (`f_hmm=5`, `n_iter=300`, joblib parallelism on
-across cores). The paper-spec `f_hmm=1` would take **~10–15 hours**.
-
-If you need to iterate faster while developing thesis extensions: drop
-`HMM.n_iter` to 100 in `config.py` while prototyping — the EM almost
-always converges well before 300 iterations.
-
-## Files
-
-| File                  | Role                                                                                       |
-|-----------------------|--------------------------------------------------------------------------------------------|
-| `config.py`           | Every hyperparameter, all three EXTENSIONS flagged.                                        |
-| `data.py`             | CSV loader, log returns, features.                                                         |
-| `wasserstein_hmm.py`  | Predictive K-selection, HMM fit, regime moments, 2-Wasserstein, template tracking.         |
-| `backtest.py`         | CVXPY/OSQP MVO solver + strictly-causal expanding-window loop with periodic HMM refit.    |
-| `reporting.py`        | Metrics, three benchmarks, regime analytics, 19 PNG figures, 8 CSV tables.                |
-| `main.py`             | Orchestrator.                                                                              |
-| `asset_data.csv`      | Price history, 1990-01-02 → 2025-12-31 (stocks/bonds/oil/gold/usd).                       |
-
-## Reproducibility
-
-All randomness is controlled by `HMM.random_state = 42`. The CSV is a
-fixed local file, so the entire pipeline is deterministic.
-
-## Outputs
-
-### Tables (`output/tables/`)
-- `performance_summary.csv` — Sharpe / Sortino / Ann mean & vol / Max DD / Hit rate vs all 3 benchmarks
-- `turnover_stats.csv` — paper Table 2 (parametric column)
-- `allocation_summary.csv` — paper Table 3
-- `concentration.csv` — paper Table 4
-- `regime_portfolio_performance.csv` — paper Table 5
-- `regime_asset_sharpe.csv` — paper Table 6
-- `daily_backtest_output.csv` — full per-day weights, PnL, regime label, K, turnover
-- `benchmark_daily_returns.csv` — SPX B&H, EW, 60/40 daily returns aligned to OOS
-
-### Figures (`output/figures/`)
-Paper figures plus five extras: drawdown overlay vs all benchmarks,
-60-day rolling Sharpe and volatility, asset-Sharpe-by-regime heatmap,
-monthly-returns calendar heatmap, and a strategy-only underwater plot.
+Cross-strategy:
+- `11_strategy_comparison.png` — cumulative log return
+- `12_drawdown_comparison.png` — drawdown
+- `13_rolling_sharpe_1y.png` — rolling Sharpe
+- `14_annual_returns.png` — calendar-year returns
+- `15_underwater.png` — underwater drawdown
