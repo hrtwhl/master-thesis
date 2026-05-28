@@ -67,9 +67,6 @@ os.makedirs(CHART_DIR, exist_ok=True)
 os.makedirs(TABLE_DIR, exist_ok=True)
 os.makedirs(RAW_DIR, exist_ok=True)
 
-# Hinweis: Wenn du die Pfade später z.B. an Pandas übergibst (df.to_csv), 
-# akzeptieren die meisten modernen Bibliotheken Path-Objekte direkt.
-
 # -----------------------------------------------------------------------
 # 1)  Asset universe (mapping from CSV column names to paper notation)
 # -----------------------------------------------------------------------
@@ -171,24 +168,33 @@ MIN_OBS_PER_REGIME = 60      # min obs to compute robust regime moments
 # -----------------------------------------------------------------------
 # 7)  Hierarchical-strategy improvements (our extension)
 # -----------------------------------------------------------------------
-# The original hierarchical implementation underperformed.  The
-# following knobs control the simplified/robust hierarchical design
-# documented in hierarchical_hmm.py:
-
-# Use a SINGLE shared market WHMM, NOT one sub-HMM per macro template.
-# Macro regime probabilities are used only to RE-WEIGHT the
-# template-conditional forward-return moments (mu_g, Sigma_g) computed
-# from the joint (macro_template, market_template) labels.  This is
-# more data-efficient because it doesn't carve the asset history into
-# small macro-conditional slices.
-HIER_USE_JOINT_MOMENTS = True
-
-# How aggressively to shift portfolio risk in adverse macro regimes:
-# in the hierarchical strategy, we additionally scale the equity-risk
-# premium (mu of SPX & OIL) by a regime-conditional shrinkage factor
-# proportional to historical equity Sharpe in that macro regime.
-# Set to 0.0 to disable the tilt and recover an "additive" hierarchy.
+# The first OOS run revealed three issues with the hierarchical
+# extension (see analysis_results.md for details):
+#   (1) macro layer collapses to 2 effective regimes that look almost
+#       identical in asset-return space;
+#   (2) the *symmetric* macro tilt below scales risky-asset expected
+#       returns by 1 + tanh(S_g, i), which is positive in BOTH
+#       effective macro regimes (SPX historical Sharpe is positive in
+#       both), so the tilt only ever pushes mu_SPX UP -- the opposite
+#       of what we want in adverse regimes;
+#   (3) macro regimes are too persistent (mean spell length 130-300
+#       days) relative to a daily MVO rebalancing horizon.
+#
+# Two knobs are available to address (2):
+#
+#   HIER_MACRO_TILT_STRENGTH  (alpha)  : tilt magnitude (0 disables)
+#   HIER_MACRO_TILT_MODE              : 'symmetric'  -> 1 + alpha * tanh(S_g, i)        [original]
+#                                       'asymmetric' -> 1 + alpha * tanh(S_g, i - S_bar) [FIX B]
+#                                       'off'        -> mu_t unchanged                  [FIX A]
+#   HIER_MACRO_TILT_ASSETS            : tuple of asset names to tilt
+#
+# Recommended for evaluation:
+#   - 'off'        -> isolates the pure-mixture effect of the macro layer
+#   - 'asymmetric' -> tilts mu_SPX DOWN when current macro regime's
+#                     historical Sharpe is BELOW the unconditional Sharpe
 HIER_MACRO_TILT_STRENGTH = 1.0
+HIER_MACRO_TILT_MODE     = "asymmetric"      # 'off' | 'symmetric' | 'asymmetric'
+HIER_MACRO_TILT_ASSETS   = ("SPX", "OIL")
 
 
 # -----------------------------------------------------------------------

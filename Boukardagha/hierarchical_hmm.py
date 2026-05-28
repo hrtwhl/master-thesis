@@ -70,7 +70,8 @@ from config import (
     MACRO_MIN_REGIMES, MACRO_MAX_REGIMES, MACRO_G_MAX,
     MACRO_ETA_TPL, MACRO_SPAWN_THRESH, MACRO_F_K, MACRO_F_REFIT,
     # Tilt
-    HIER_MACRO_TILT_STRENGTH,
+    HIER_MACRO_TILT_STRENGTH, HIER_MACRO_TILT_MODE,
+    HIER_MACRO_TILT_ASSETS,
 )
 from features import build_asset_features, build_macro_features
 from wasserstein_hmm import (
@@ -275,29 +276,51 @@ def _apply_macro_tilt(mu_t: np.ndarray,
                       pG_macro: np.ndarray,
                       sharpe_per_g: np.ndarray,
                       asset_names: list[str],
-                      strength: float) -> np.ndarray:
+                      strength: float,
+                      mode: str = "symmetric",
+                      tilt_assets: tuple = ("SPX", "OIL")) -> np.ndarray:
     """
-    Re-scale equity-related expected returns (SPX, OIL) by a smooth
-    macro-conditional factor.  The factor for each asset i is:
-        factor_i = 1 + strength * sum_g pG[g] * tanh(S[g, i])
-    where S[g, i] is historical Sharpe of asset i in macro template g.
-    tanh saturates around +/- 1 to avoid wild scaling on regimes with
-    extreme historical Sharpe.
+    Re-scale risky-asset expected returns by a smooth macro-conditional
+    factor.  Two modes:
 
-    Defensive assets (BOND, GOLD, USD) are left untouched: the goal is
-    to shrink risky-asset expected returns specifically when the macro
-    layer signals an adverse environment for them.
+      'off':         no tilt (identity).
+      'symmetric':   factor_i = 1 + alpha * sum_g pG[g] * tanh(S_{g,i})
+                     - always positive if S_{g,i} > 0 in all dominant
+                       regimes -> can only push mu UP.  Original design.
+      'asymmetric':  factor_i = 1 + alpha * sum_g pG[g] *
+                                tanh(S_{g,i} - S_bar_i)
+                     where S_bar_i = mean_g pG[g] * S_{g,i} is the
+                     current macro-mixed unconditional Sharpe.  Now
+                     tanh can fire negative when the current macro
+                     regime has worse-than-average Sharpe for asset i,
+                     enabling DOWNWARD tilt in adverse regimes.
+
+    Defensive assets (BOND, GOLD, USD) are left untouched.
+
+    tanh(.) saturates around +/- 1 to avoid wild scaling on regimes
+    with extreme historical Sharpe.
     """
-    if strength <= 0.0:
+    if mode == "off" or strength <= 0.0:
         return mu_t
 
-    risky_assets = {"SPX", "OIL"}
+    tilt_set = set(tilt_assets)
     factor = np.ones(len(asset_names))
+
+    if mode == "asymmetric":
+        # Per-asset unconditional Sharpe mixed by current macro
+        # posterior.  Equivalent to sum_g pG[g] * S[g, i].
+        S_bar = pG_macro @ sharpe_per_g          # shape (N,)
+
     for i, a in enumerate(asset_names):
-        if a not in risky_assets:
+        if a not in tilt_set:
             continue
-        s_a = sharpe_per_g[:, i]                      # (G_macro,)
-        tilt = float(np.dot(pG_macro, np.tanh(s_a)))  # in (-1, +1)
+        s_a = sharpe_per_g[:, i]                 # (G_macro,)
+        if mode == "symmetric":
+            tilt = float(np.dot(pG_macro, np.tanh(s_a)))
+        elif mode == "asymmetric":
+            tilt = float(np.dot(pG_macro, np.tanh(s_a - S_bar[i])))
+        else:
+            raise ValueError(f"Unknown HIER_MACRO_TILT_MODE: {mode}")
         factor[i] = 1.0 + strength * tilt
 
     return mu_t * factor
@@ -434,13 +457,16 @@ def run_hierarchical_strategy(returns: pd.DataFrame,
         Sigma_t = 0.5 * (Sigma_t + Sigma_t.T)
 
         # ---- 6) Optional macro tilt on risky-asset returns -------
-        if HIER_MACRO_TILT_STRENGTH > 0.0:
+        if HIER_MACRO_TILT_MODE != "off" and HIER_MACRO_TILT_STRENGTH > 0.0:
             S_g = _macro_sharpe_per_g(ret_align, g_s,
                                       G_macro=G_macro,
                                       asset_names=asset_names)
-            mu_t = _apply_macro_tilt(mu_t, pG_macro, S_g,
-                                     asset_names,
-                                     strength=HIER_MACRO_TILT_STRENGTH)
+            mu_t = _apply_macro_tilt(
+                mu_t, pG_macro, S_g, asset_names,
+                strength=HIER_MACRO_TILT_STRENGTH,
+                mode=HIER_MACRO_TILT_MODE,
+                tilt_assets=HIER_MACRO_TILT_ASSETS,
+            )
 
         # ---- 7) MVO -----------------------------------------------
         w_t = solve_mvo(mu_t, Sigma_t, w_prev,
