@@ -52,22 +52,26 @@ regime_aware_investing/
 ├── hierarchical_hmm.py    # Hierarchical B (joint mixture) and C (risk modulator)
 ├── backtest.py            # pure-market backtest + static benchmark + CSV helper
 ├── diagnostics.py         # Sharpe/Sortino/DD/turnover/N_eff/persistence
-├── plots.py               # all paper charts + macro charts + comparisons
-├── run_pure.py            # entry: pure-market backtest only
-├── run_hier.py            # entry: BOTH hierarchical backtests (B and C)
-├── aggregate.py           # reads raw CSVs -> tables + PNGs
-├── narrative.py           # Markdown auto-summary
-├── report.py              # single-page HTML report
-├── main.py                # end-to-end driver (1 → 5)
-├── methodology.md         # detailed mathematical specification (with formulas)
-├── analysis_results.md    # findings from the OOS runs + design rationale
+├── plots.py                  # all paper charts + macro charts + comparisons
+├── run_pure.py               # entry: pure-market backtest only
+├── run_hier.py               # entry: BOTH hierarchical backtests (B and C)
+├── aggregate.py              # reads raw CSVs -> tables + PNGs
+├── narrative.py              # Markdown auto-summary
+├── report.py                 # single-page HTML report
+├── robustness_ksweep.py      # R1: loosened-K macro sweep (regime-collapse robustness)
+├── robustness_nooverlap.py   # R2: no-overlap macro panel (drops stocks & oil)
+├── main.py                   # end-to-end driver (1 → 7; --no-robustness for 1 → 5)
+├── methodology.md            # detailed mathematical specification (with formulas)
+├── analysis_results.md       # findings from the OOS runs + design rationale
 └── output/
-    ├── charts/                                  # PNG figures (~46 files)
-    ├── tables/                                  # paper-ready CSVs (T01..T10)
+    ├── charts/                                  # PNG figures
+    ├── tables/                                  # paper-ready CSVs (T01..T10, R1*, R2*)
     ├── raw/                                     # daily PnL/weights/regime time series
     ├── daily_backtest_output_pure.csv           # unified daily output (requested schema)
     ├── daily_backtest_output_hierB.csv          # Hierarchical B + macro columns
     ├── daily_backtest_output_hierC.csv          # Hierarchical C + macro/stress/gamma columns
+    ├── daily_backtest_output_hierB_nooverlap.csv# R2 variant
+    ├── daily_backtest_output_hierC_nooverlap.csv# R2 variant
     ├── daily_backtest_output_benchmarks.csv
     ├── narrative_summary.md
     └── report.html
@@ -77,18 +81,43 @@ regime_aware_investing/
 
 ```bash
 cd regime_aware_investing
-python main.py     # pure + hierarchical B + hierarchical C + aggregate (~90 min, 1 CPU)
+python main.py                  # full pipeline incl. robustness (~3 h, 1 CPU)
+python main.py --no-robustness  # core only: pure + B + C + aggregate (~90 min)
 ```
 
 Or run the stages independently (useful for iterating on plots):
 
 ```bash
-python run_pure.py     # ~30 min  (pure-market)
-python run_hier.py     # ~60 min  (Hierarchical B then Hierarchical C)
-python aggregate.py    # <1 min   (tables + charts + benchmarks)
-python narrative.py    # writes output/narrative_summary.md
-python report.py       # writes output/report.html
+python run_pure.py               # ~30 min  (pure-market)
+python run_hier.py               # ~60 min  (Hierarchical B then Hierarchical C)
+python aggregate.py              # <1 min   (tables + charts + benchmarks)
+python narrative.py              # writes output/narrative_summary.md
+python report.py                 # writes output/report.html
+python robustness_ksweep.py      # R1: ~60 min (5 macro-only sweeps)
+python robustness_nooverlap.py   # R2: ~60 min (B and C on 5-var macro panel)
 ```
+
+## Robustness analyses
+
+**R1 — Loosened-K macro sweep** (`robustness_ksweep.py`). Tests whether
+the 2-effective-regime collapse of the macro layer is *data-driven* or
+merely imposed by the tight, penalised default config. Re-runs only the
+macro WHMM under five configs (default through K up to 8, no complexity
+penalty, low spawn threshold, non-monotone K) and counts how many
+*durable* templates (dominant on ≥ `R1_DURABLE_SHARE` = 2% of days)
+emerge. Configs live in `config.R1_KSWEEP_CONFIGS`. Outputs:
+`tables/R1_ksweep_summary.csv`, per-config share tables, daily regime
+paths, and `charts/R1_ksweep_durable_regimes.png`.
+
+**R2 — No-overlap macro panel** (`robustness_nooverlap.py`). `stocks`
+(=SPX) and `oil` are also tradeable assets, making the macro and market
+layers informationally dependent. R2 re-runs Hierarchical B and C with
+`config.R2_MACRO_VARS` = `[copper, yield_curve, stock_bond_corr, vix,
+us3mo]` (the genuinely exogenous subset) and compares against the
+full-panel and pure results. Outputs:
+`daily_backtest_output_hier{B,C}_nooverlap.csv`,
+`tables/R2_nooverlap_performance.csv`, and
+`charts/R2_nooverlap_comparison.png`.
 
 ## Hierarchical C tuning knobs (in `config.py`)
 

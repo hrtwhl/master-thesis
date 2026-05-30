@@ -140,6 +140,35 @@ MACRO_F_REFIT      = 5       # weekly macro refit (macro regimes are slow)
 
 
 # -----------------------------------------------------------------------
+# 4R)  Robustness analyses
+# -----------------------------------------------------------------------
+# R1 - Loosened-K macro sweep (robustness_ksweep.py).
+#      Tests whether the 2-effective-regime collapse is data-driven or
+#      imposed by the tight, penalised default macro config.  We re-run
+#      ONLY the macro Wasserstein-HMM (no MVO) under each config below
+#      and count how many DURABLE templates emerge (templates whose
+#      dominant-share over the OOS exceeds R1_DURABLE_SHARE).
+R1_KSWEEP_CONFIGS = [
+    # label                  Kmin Kmax Gmax lamK spawn monotone
+    ("default_4_5",            4,   5,   6,  1.0,  2.5,  True),
+    ("loose_4_8",              4,   8,  10,  1.0,  2.5,  True),
+    ("loose_4_8_nopenalty",    4,   8,  10,  0.0,  2.5,  True),
+    ("loose_4_8_lowspawn",     4,   8,  10,  0.0,  1.0,  True),
+    ("free_3_8_nonmono",       3,   8,  10,  0.0,  1.0,  False),
+]
+R1_DURABLE_SHARE = 0.02   # a template is "durable" if dominant on >=2% of OOS days
+
+# R2 - No-overlap macro panel (robustness_nooverlap.py).
+#      'stocks' (=SPX) and 'oil' are also tradeable assets; the market
+#      WHMM already sees them.  Including them in the macro panel makes
+#      the macro and market layers informationally dependent.  R2 re-runs
+#      Hierarchical B and C with a macro panel that EXCLUDES the
+#      overlapping variables, leaving only genuinely exogenous
+#      macro-financial series.
+R2_MACRO_VARS = ["copper", "yield_curve", "stock_bond_corr", "vix", "us3mo"]
+
+
+# -----------------------------------------------------------------------
 # 5)  Mean-variance optimizer (paper defaults, verbatim)
 # -----------------------------------------------------------------------
 LAM      = 5.0       # risk aversion gamma

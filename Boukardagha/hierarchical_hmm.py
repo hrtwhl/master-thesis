@@ -350,13 +350,30 @@ def _make_market_state(N: int) -> WassersteinHMMState:
     )
 
 
-def _make_macro_state(N: int) -> WassersteinHMMState:
-    return WassersteinHMMState(
-        n_features_returns=N,
+def _make_macro_state(N: int, cfg: dict | None = None) -> WassersteinHMMState:
+    """
+    Build the macro-layer WHMM state.
+
+    `cfg` optionally overrides the default macro-layer configuration
+    (used by the loosened-K robustness sweep).  Recognised keys:
+        min_regimes, max_regimes, g_max, eta_tpl, spawn_thresh,
+        f_k, lam_k, monotone_K.
+    """
+    c = dict(
         min_regimes=MACRO_MIN_REGIMES, max_regimes=MACRO_MAX_REGIMES,
         g_max=MACRO_G_MAX, eta_tpl=MACRO_ETA_TPL,
         spawn_thresh=MACRO_SPAWN_THRESH,
-        f_k=MACRO_F_K, l_val=L_VAL, lam_k=LAM_K, monotone_K=True,
+        f_k=MACRO_F_K, lam_k=LAM_K, monotone_K=True,
+    )
+    if cfg:
+        c.update(cfg)
+    return WassersteinHMMState(
+        n_features_returns=N,
+        min_regimes=c["min_regimes"], max_regimes=c["max_regimes"],
+        g_max=c["g_max"], eta_tpl=c["eta_tpl"],
+        spawn_thresh=c["spawn_thresh"],
+        f_k=c["f_k"], l_val=L_VAL, lam_k=c["lam_k"],
+        monotone_K=c["monotone_K"],
     )
 
 
@@ -583,6 +600,68 @@ def run_hierarchical_strategy_C(returns: pd.DataFrame,
     base["macro_stress"]    = pd.Series(stress_history, index=idx, name="macro_stress")
     base["gamma_eff"]       = pd.Series(gamma_history, index=idx, name="gamma_eff")
     return base
+
+
+# =======================================================================
+#  Standalone macro regime-path runner (Robustness R1 sweep)
+# =======================================================================
+def run_macro_regime_path(returns: pd.DataFrame,
+                          macro_levels: pd.DataFrame,
+                          macro_cfg: dict | None = None,
+                          oos_start: str = OOS_START,
+                          track_space: str = "outcome",
+                          verbose: bool = True) -> pd.DataFrame:
+    """
+    Run ONLY the macro Wasserstein-HMM layer (no market layer, no MVO)
+    and return its daily regime diagnostics.  Used by the loosened-K
+    robustness sweep to characterise how many DURABLE macro regimes
+    emerge under different model configurations.
+
+    `macro_cfg` overrides the macro-layer config (see _make_macro_state).
+    `track_space`: 'outcome' (asset-return-space templates, as in
+    Hierarchical C) or 'feature' (macro-feature-space, as in B).
+
+    Returns a DataFrame indexed by date with columns:
+        K_macro, G_macro, regime_macro (dominant template), max_p_macro.
+    """
+    N = returns.shape[1]
+    macro_features_full = build_macro_features(macro_levels)
+    common_idx = returns.index.intersection(macro_features_full.index)
+    oos_dates = common_idx[common_idx >= pd.Timestamp(oos_start)]
+
+    macro_state = _make_macro_state(N, cfg=macro_cfg)
+
+    dates, K_hist, G_hist, lbl_hist, prob_hist = [], [], [], [], []
+
+    iterator = enumerate(oos_dates)
+    if verbose:
+        iterator = enumerate(tqdm(oos_dates, desc="Macro sweep", ncols=100))
+
+    for t_i, date in iterator:
+        prep = _prep_step(returns, macro_levels, date, t_i)
+        if prep is None:
+            dates.append(date); K_hist.append(np.nan); G_hist.append(0)
+            lbl_hist.append(np.nan); prob_hist.append(np.nan)
+            continue
+        _, X_macro, ret_align, common = prep
+
+        macro_out = step_macro_whmm(
+            macro_state, X_macro, step_index=t_i, refit_every=MACRO_F_REFIT,
+            ret_align=ret_align if track_space == "outcome" else None,
+            track_space=track_space,
+        )
+        pG = macro_out["pG"]
+        dates.append(date)
+        K_hist.append(macro_out["K"])
+        G_hist.append(macro_out["G"])
+        lbl_hist.append(int(np.argmax(pG)))
+        prob_hist.append(float(np.max(pG)))
+
+    idx = pd.to_datetime(dates)
+    return pd.DataFrame({
+        "K_macro": K_hist, "G_macro": G_hist,
+        "regime_macro": lbl_hist, "max_p_macro": prob_hist,
+    }, index=idx)
 
 
 # =======================================================================

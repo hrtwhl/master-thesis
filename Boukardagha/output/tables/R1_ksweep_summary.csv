@@ -1,0 +1,6 @@
+config,K_max_allowed,lambda_K,spawn_thresh,monotone_K,K_reached,G_reached,n_durable_regimes,top1_share,n_distinct_labels,elapsed_s
+default_4_5,5,1.0,2.5,True,5,5,2,0.7562979189485214,3,399.4
+loose_4_8,8,1.0,2.5,True,8,5,2,0.6907630522088354,2,666.5
+loose_4_8_nopenalty,8,0.0,2.5,True,8,5,2,0.6907630522088354,2,698.7
+loose_4_8_lowspawn,8,0.0,1.0,True,8,6,2,0.6907630522088354,2,591.4
+free_3_8_nonmono,8,0.0,1.0,False,8,4,2,0.7345746622855056,2,890.3

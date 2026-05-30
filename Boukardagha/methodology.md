@@ -249,13 +249,13 @@ above the market WHMM.  Following Fine, Singer & Tishby (1998), the
 two levels are organised as a tree.  We define **two** hierarchical
 strategies that differ in how the macro layer is used:
 
-* **Hierarchical B** (§4.1-4.4, 4.6) — *joint mixture*.  Macro
+* **Hierarchical B** (§4.1-4.5) — *joint mixture*.  Macro
   templates are tracked in macro-feature space; conditional moments
   are computed on the joint $(g, h)$ cells and mixed by
   $p(t,g,h) = p^{(M)}_{t,g}\, p^{(A)}_{t,h}$.  No expected-return
   tilt.
 
-* **Hierarchical C** (§4.7) — *macro as risk modulator*.  Macro
+* **Hierarchical C** (§4.6) — *macro as risk modulator*.  Macro
   templates are tracked in **asset-outcome space**; the macro
   posterior is tempered; the market layer alone produces $\mu_t$ and
   $\Sigma_t$ (exactly as in the pure-market strategy); the macro
@@ -347,7 +347,7 @@ $$
 \Sigma_t = \sum_{g,h} p_t(g, h)\, \Sigma_{g,h}. \;}
 $$
 
-### 4.6 Optimization (Hierarchical B)
+### 4.5 Optimization (Hierarchical B)
 
 Hierarchical B passes the joint-mixture moments $(\mu_t, \Sigma_t)$
 of §4.4 directly into the same optimiser as the pure-market strategy
@@ -372,7 +372,7 @@ subject to the same budget, long-only, and box constraints.
 > documented in `analysis_results.md`; the tilt has been **removed**,
 > and the lessons motivate Hierarchical C below.
 
-### 4.7 Hierarchical C — macro layer as risk modulator
+### 4.6 Hierarchical C — macro layer as risk modulator
 
 Hierarchical C addresses the three failure modes diagnosed for the
 joint-mixture design (`analysis_results.md`): (1) macro regimes that
@@ -515,6 +515,56 @@ The only methodological deviation is `HMM_N_ITER = 100` (paper: 300).
 EM converges in $\leq 80$ iterations at `tol=1e-3` for every fit
 size encountered in this backtest, so the cap is non-binding.  Set
 `HMM_N_ITER = 300` in `config.py` to recover the paper exactly.
+
+---
+
+## 6R. Robustness analyses
+
+### 6R.1 Loosened-K macro sweep (R1)
+
+The macro layer collapses to $\approx 2$ effective regimes under the
+default configuration ($K^{(M)}\in\{4,5\}$, $\lambda_K=1$,
+$\tau_\text{spawn}=2.5$, monotone-$K$).  To establish that this is a
+property of the *data* rather than an artifact of a tight, penalised
+configuration, we re-run the macro Wasserstein-HMM alone (no market
+layer, no MVO) under a ladder of progressively freer configurations:
+
+| Config | $K_{\max}$ | $\lambda_K$ | $\tau_\text{spawn}$ | monotone-$K$ |
+| ------ | ---------- | ----------- | ------------------- | ------------ |
+| `default_4_5`          | 5 | 1.0 | 2.5 | yes |
+| `loose_4_8`            | 8 | 1.0 | 2.5 | yes |
+| `loose_4_8_nopenalty`  | 8 | 0.0 | 2.5 | yes |
+| `loose_4_8_lowspawn`   | 8 | 0.0 | 1.0 | yes |
+| `free_3_8_nonmono`     | 8 | 0.0 | 1.0 | no  |
+
+For each config we count the number of **durable** templates — those
+that are the dominant macro regime on at least $\rho_\text{min}$
+(`R1_DURABLE_SHARE` $= 2\%$) of OOS days.  A template that the HMM
+nominally creates but never sustains as a dominant state is not a
+genuine regime.  Macro templates are tracked in asset-outcome space
+(as in Hierarchical C).  If the number of durable regimes stays
+$\approx 2$ even when $K$ may rise to 8 with no penalty and a low
+spawn threshold, the collapse is data-driven.
+
+### 6R.2 No-overlap macro panel (R2)
+
+Two of the seven Mulliner macro variables — `stocks` ($\equiv$ SPX)
+and `oil` — are *also* tradeable assets in the universe
+$\mathcal{A}$.  Their inclusion in the macro panel makes the macro and
+market layers informationally dependent, and weakens the conditional
+independence assumption $p(t,g,h) = p^{(M)}_{t,g} p^{(A)}_{t,h}$ used
+in Hierarchical B.  R2 re-runs both hierarchical strategies with the
+non-overlapping macro panel
+
+$$
+\mathcal{M}_\text{R2} = \{\text{copper, yield\_curve, stock\_bond\_corr, vix, us3mo}\},
+$$
+
+containing only genuinely exogenous macro-financial series.  If
+Hierarchical C still outperforms the pure-market strategy under
+$\mathcal{M}_\text{R2}$, its edge cannot be attributed to the macro
+layer re-using tradeable-asset information that the market layer
+already observes.
 
 ---
 
