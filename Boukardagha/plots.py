@@ -224,27 +224,28 @@ def plot_macro_diagnostics(macro_label: pd.Series,
                            market_label: pd.Series,
                            K_macro: pd.Series,
                            G_macro: pd.Series,
-                           asset_returns: pd.DataFrame) -> dict:
+                           asset_returns: pd.DataFrame,
+                           prefix: str = "hier_") -> dict:
     out = {}
 
     fig, ax = plt.subplots(figsize=(11, 3))
     ax.plot(macro_label.index, macro_label.values, linewidth=0.9)
-    ax.set_title("Hierarchical: Dominant MACRO Template Over Time")
+    ax.set_title(f"{prefix}: Dominant MACRO Template Over Time")
     ax.grid(True)
-    out["hier_macro_label"] = _save(fig, "hier_macro_label.png")
+    out["macro_label"] = _save(fig, f"{prefix}macro_label.png")
 
     fig, ax = plt.subplots(figsize=(11, 3))
     ax.plot(macro_prob.index, macro_prob.values, linewidth=0.9)
-    ax.set_title("Hierarchical: Max MACRO Posterior Over Time")
+    ax.set_title(f"{prefix}: Max MACRO Posterior Over Time")
     ax.grid(True)
-    out["hier_macro_prob"] = _save(fig, "hier_macro_prob.png")
+    out["macro_prob"] = _save(fig, f"{prefix}macro_prob.png")
 
     fig, ax = plt.subplots(figsize=(11, 3))
     ax.plot(K_macro.index, K_macro.values, linewidth=1, label="K_macro")
     ax.plot(G_macro.index, G_macro.values, linewidth=1, label="G_macro")
-    ax.set_title("Hierarchical: Macro-Layer K and G Over Time")
+    ax.set_title(f"{prefix}: Macro-Layer K and G Over Time")
     ax.grid(True); ax.legend()
-    out["hier_macro_KG"] = _save(fig, "hier_macro_KG.png")
+    out["macro_KG"] = _save(fig, f"{prefix}macro_KG.png")
 
     # Joint (macro, market) frequency heatmap
     df = pd.DataFrame({"g": macro_label, "h": market_label}).dropna()
@@ -261,21 +262,42 @@ def plot_macro_diagnostics(macro_label: pd.Series,
         ax.set_yticklabels(tab.index)
         ax.set_xlabel("market template h")
         ax.set_ylabel("macro template g")
-        ax.set_title("Joint frequency p(g, h)  [% of days]")
+        ax.set_title(f"{prefix}: Joint frequency p(g, h)  [% of days]")
         for i in range(tab.shape[0]):
             for j in range(tab.shape[1]):
                 ax.text(j, i, f"{tab.values[i, j]:.1f}",
                         ha="center", va="center", fontsize=8,
                         color="black" if tab.values[i, j] < 15 else "white")
         plt.colorbar(im, ax=ax, label="% of days")
-        out["hier_macro_vs_market"] = _save(fig, "hier_macro_vs_market.png")
+        out["macro_vs_market"] = _save(fig, f"{prefix}macro_vs_market.png")
 
     # Macro-conditional asset Sharpe (separate from market-template version)
-    out["hier_macro_asset_sharpe"] = _plot_asset_sharpe_by_regime(
-        asset_returns, macro_label, prefix="hier_macro_",
+    out["macro_asset_sharpe"] = _plot_asset_sharpe_by_regime(
+        asset_returns, macro_label, prefix=f"{prefix}macro_",
     )
 
     return out
+
+
+def plot_macro_stress(stress: pd.Series, gamma_eff: pd.Series,
+                      name: str = "hierC_macro_stress") -> str:
+    """Hierarchical-C diagnostic: macro stress score and the resulting
+    effective risk aversion over time (twin axes)."""
+    fig, ax1 = plt.subplots(figsize=(11, 4))
+    ax1.plot(stress.index, stress.values, linewidth=0.9,
+             color="tab:red", label="macro stress (0-1)")
+    ax1.set_ylabel("macro stress", color="tab:red")
+    ax1.tick_params(axis="y", labelcolor="tab:red")
+    ax1.grid(True)
+
+    ax2 = ax1.twinx()
+    ax2.plot(gamma_eff.index, gamma_eff.values, linewidth=0.9,
+             color="tab:blue", label="effective gamma")
+    ax2.set_ylabel("effective gamma", color="tab:blue")
+    ax2.tick_params(axis="y", labelcolor="tab:blue")
+
+    ax1.set_title("Hierarchical C: Macro Stress and Effective Risk Aversion")
+    return _save(fig, f"{name}.png")
 
 
 # =======================================================================

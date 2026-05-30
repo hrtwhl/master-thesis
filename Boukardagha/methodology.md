@@ -242,18 +242,40 @@ OSQP via cvxpy with SCS fallback.
 
 ---
 
-## 4. Hierarchical Wasserstein HMM (Hierarchical Strategy)
+## 4. Hierarchical Wasserstein HMM (two strategies)
 
-The hierarchical strategy adds a top-level macro Wasserstein HMM
+The hierarchical strategies add a top-level macro Wasserstein HMM
 above the market WHMM.  Following Fine, Singer & Tishby (1998), the
-two levels are organised as a tree:
+two levels are organised as a tree.  We define **two** hierarchical
+strategies that differ in how the macro layer is used:
+
+* **Hierarchical B** (§4.1-4.4, 4.6) — *joint mixture*.  Macro
+  templates are tracked in macro-feature space; conditional moments
+  are computed on the joint $(g, h)$ cells and mixed by
+  $p(t,g,h) = p^{(M)}_{t,g}\, p^{(A)}_{t,h}$.  No expected-return
+  tilt.
+
+* **Hierarchical C** (§4.7) — *macro as risk modulator*.  Macro
+  templates are tracked in **asset-outcome space**; the macro
+  posterior is tempered; the market layer alone produces $\mu_t$ and
+  $\Sigma_t$ (exactly as in the pure-market strategy); the macro
+  layer produces a scalar **stress** score that scales the effective
+  risk aversion $\gamma_t$ and inflates $\Sigma_t$.
 
 ```
+Hierarchical B:
 Root
-├── Macro template g = 1, …, G_macro     (operates on macro features)
-└── Market template h = 1, …, G_market   (operates on asset features)
+├── Macro template g = 1, …, G_macro     (macro-feature-space templates)
+└── Market template h = 1, …, G_market   (asset features)
         ↓
-    Joint cell (g, h) provides (μ_{g,h}, Σ_{g,h})
+    Joint cell (g, h) provides (μ_{g,h}, Σ_{g,h}); mix by p(g,h)
+
+Hierarchical C:
+Root
+├── Macro template g = 1, …, G_macro     (asset-OUTCOME-space templates)
+│        ↓ tempered posterior → stress_t ∈ [0,1]
+│        ↓ γ_t = γ·(1+κ·stress_t),  Σ_t ← Σ_t·(1+s·stress_t)
+└── Market template h = 1, …, G_market   (asset features) → μ_t, Σ_t
 ```
 
 ### 4.1 Macro Wasserstein HMM (top layer)
@@ -325,69 +347,122 @@ $$
 \Sigma_t = \sum_{g,h} p_t(g, h)\, \Sigma_{g,h}. \;}
 $$
 
-### 4.5 Macro-conditional tilt on risky-asset expected returns
+### 4.6 Optimization (Hierarchical B)
 
-To translate macro information into a directional signal that the
-optimiser will respond to, we apply a smooth tilt to the expected
-returns of risky assets $\mathcal{R} = \{\text{SPX, OIL}\}$ before
-passing $\mu_t$ to the optimiser.
-
-For each macro template $g$, compute the historical annualised
-Sharpe of each risky asset:
+Hierarchical B passes the joint-mixture moments $(\mu_t, \Sigma_t)$
+of §4.4 directly into the same optimiser as the pure-market strategy
+(§3.5), with **no expected-return tilt**:
 
 $$
-S_{g, i} = \sqrt{252}\, \frac{\mathbb{E}[r_{s+1, i} \mid g_s = g]}{\sigma_{i \mid g}}.
+\max_{w_t}\;\; \mu_t^\top w_t - \gamma\, w_t^\top \Sigma_t w_t - \tau \lVert w_t - w_{t-1} \rVert_1,
 $$
 
-The tilt factor for asset $i \in \mathcal{R}$ depends on
-`HIER_MACRO_TILT_MODE`:
+subject to the same budget, long-only, and box constraints.
 
-**`'symmetric'` mode** (original design — first OOS run):
+> **Design history.**  An earlier version of Hierarchical B applied a
+> macro-conditional tilt to the expected returns of risky assets,
+> $\widetilde\mu_{t,i} = \phi_{t,i}\,\mu_{t,i}$ with
+> $\phi_{t,i} = 1 + \alpha\sum_g p^{(M)}_{t,g}\tanh(S_{g,i})$.  This
+> *symmetric* tilt only ever pushed $\mu_\text{SPX}$ **upward** (SPX
+> Sharpe is positive in both dominant macro regimes), worsening the
+> 2022 drawdown.  An *asymmetric* variant centred on the macro-mixed
+> mean Sharpe, $\tanh(S_{g,i}-\bar S_{t,i})$, turned out to be a
+> numerical no-op because the macro posterior is one-hot $\approx99\%$
+> of days (so $\bar S_{t,i}=S_{g,i}$ and the tilt vanishes).  Both are
+> documented in `analysis_results.md`; the tilt has been **removed**,
+> and the lessons motivate Hierarchical C below.
+
+### 4.7 Hierarchical C — macro layer as risk modulator
+
+Hierarchical C addresses the three failure modes diagnosed for the
+joint-mixture design (`analysis_results.md`): (1) macro regimes that
+are not discriminative in asset-return space, (2) dilution of the
+market layer's clean directional signal by joint-cell averaging, and
+(3) an over-confident, one-hot macro posterior.  The 21-feature
+Mulliner macro set is retained unchanged.
+
+**(C1) Macro templates tracked in asset-outcome space.**
+The macro WHMM still infers latent states $z^{(M)}_t$ from the
+z-scored 21-d macro features, but the persistent **templates** are
+matched and EMA-updated (via the same $W_2$ machinery, §3.3) using
+the Gaussian of **forward asset returns** conditional on each macro
+component:
 
 $$
-\phi_{t,i}^{\text{sym}} = 1 + \alpha \sum_{g} p^{(M)}_{t,g} \cdot \tanh\!\big(S_{g, i}\big),
+\mu^{(C)}_{g} = \mathbb{E}[\,r_{s+1} \mid z^{(M)}_s = g\,], \qquad
+\Sigma^{(C)}_{g} = \text{LedoitWolf}\big(\{ r_{s+1} : z^{(M)}_s = g \}\big).
 $$
 
-with $\alpha = $ `HIER_MACRO_TILT_STRENGTH` $= 1$.  The $\tanh(\cdot)$
-saturates at $\pm 1$ to prevent wild scaling on regimes with extreme
-historical Sharpe.  **Problem in practice**: if $S_{g, i} > 0$ in all
-dominant macro regimes (which it is for SPX in our 21-year sample),
-the tilt only ever pushes $\mu_{t, i}$ **upward** — never downward —
-so the optimiser receives no signal to underweight risky assets in
-adverse regimes (see `analysis_results.md` §2).
+Macro regimes are thereby discriminative for allocation **by
+construction** — two macro states that imply the same asset-return
+distribution collapse to the same template.
 
-**`'asymmetric'` mode** (new default):
+**(C2) Macro modulates risk, not direction.**
+The market WHMM (§3.1-3.4) alone produces the expected-return vector
+$\mu_t$ and covariance $\Sigma_t$ — identical to the pure-market
+strategy, preserving its clean directional signal.  The macro layer
+contributes only a scalar **stress** score $\text{stress}_t \in [0,1]$.
+
+For each macro template $g$ with $\geq N_\text{min}$ observations,
+let $r^\text{EW}_{s+1} = \tfrac1N\mathbf 1^\top r_{s+1}$ be the
+equal-weight forward return (a regime-agnostic turbulence proxy).
+Define a raw turbulence score (default `HIER_C_STRESS_METRIC='vol'`):
+
+$$
+\rho_g = \sqrt{252}\;\operatorname{std}\big(\{ r^\text{EW}_{s+1} : z^{(M)}_s = g \}\big),
+$$
+
+(or, optionally, the within-regime max drawdown, or
+$\max(0,-\text{Sharpe})$).  Cross-sectionally min-max normalise to
+$[0,1]$:
+
+$$
+\widehat\rho_g = \frac{\rho_g - \min_{g'}\rho_{g'}}{\max_{g'}\rho_{g'} - \min_{g'}\rho_{g'}}.
+$$
+
+**(C3) Tempered, prior-blended macro posterior.**
+Because the raw macro posterior $p^{(M)}_{t,\cdot}$ is one-hot
+$\approx 99\%$ of the time, we soften it with temperature
+$T = $ `HIER_C_MACRO_TEMPERATURE` and blend with a uniform prior of
+weight $\beta = $ `HIER_C_PRIOR_BLEND`:
+
+$$
+\tilde p^{(M)}_{t,g} \propto \big(p^{(M)}_{t,g}\big)^{1/T},
+\qquad
+\bar p^{(M)}_{t,g} = (1-\beta)\,\tilde p^{(M)}_{t,g} + \beta \cdot \tfrac1{G^{(M)}}.
+$$
+
+The composite stress score is the tempered-posterior expectation of
+the normalised turbulence:
+
+$$
+\boxed{\; \text{stress}_t = \sum_{g} \bar p^{(M)}_{t,g}\,\widehat\rho_g \;\in\;[0,1]. \;}
+$$
+
+**Risk modulation and optimisation.**
+The macro stress raises the effective risk aversion and inflates the
+covariance:
 
 $$
 \boxed{\;
-\phi_{t,i}^{\text{asym}} = 1 + \alpha \sum_{g} p^{(M)}_{t,g} \cdot \tanh\!\big(S_{g, i} - \bar S_{t, i}\big),
+\gamma_t = \gamma\,\big(1 + \kappa\,\text{stress}_t\big),
 \qquad
-\bar S_{t, i} = \sum_{g} p^{(M)}_{t,g}\, S_{g, i}, \;}
+\Sigma^{(C)}_t = \Sigma_t\,\big(1 + s\,\text{stress}_t\big), \;}
 $$
 
-i.e. each macro template's contribution is centered on the
-**macro-mixed unconditional Sharpe** $\bar S_{t, i}$.  Now
-$\tanh(\cdot)$ fires **negative** when the current macro regime has
-worse-than-average Sharpe for asset $i$, which shrinks $\mu_{t, i}$
-— exactly what the optimiser needs to rotate out of risky assets in
-adverse regimes.
-
-**`'off'` mode**: $\phi_{t,i} = 1$ for all $i$, leaving $\mu_t$
-unchanged.  Use this to isolate the pure-mixture effect of the macro
-layer (Σ_t only).
-
-Defensive assets (BOND, GOLD, USD) are untouched in all modes.
-Letting $\widetilde \mu_{t, i} = \phi_{t,i} \cdot \mu_{t, i}$ for the
-risky assets and $\widetilde \mu_{t, i} = \mu_{t, i}$ otherwise, the
-optimiser receives $\widetilde \mu_t$ as the expected-return input.
-
-### 4.6 Optimization
-
-Identical to Section 3.5:
+with $\kappa = $ `HIER_C_KAPPA_GAMMA` $= 4$ and $s = $
+`HIER_C_SIGMA_SCALE` $= 1$.  The day-$t$ weights solve
 
 $$
-\max_{w_t}\;\; \widetilde{\mu}_t^\top w_t - \gamma w_t^\top \Sigma_t w_t - \tau \lVert w_t - w_{t-1} \rVert_1.
+\max_{w_t}\;\; \mu_t^\top w_t - \gamma_t\, w_t^\top \Sigma^{(C)}_t w_t - \tau \lVert w_t - w_{t-1} \rVert_1,
 $$
+
+subject to the same constraints as §3.5.  In benign macro regimes
+($\text{stress}_t \to 0$) Hierarchical C reduces exactly to the
+pure-market strategy; in turbulent macro regimes it de-risks
+(higher $\gamma_t$, inflated $\Sigma_t$) toward a flatter, more
+diversified allocation, while letting the market layer continue to
+choose the direction of any active tilt.
 
 ---
 
@@ -467,11 +542,16 @@ size encountered in this backtest, so the cap is non-binding.  Set
 | $w_i$ (long-only) | $\geq 0$ |
 | Solver | OSQP, SCS fallback |
 
-| Macro-tilt parameter (hierarchical only) | Value |
-| ---------------------------------------- | ----- |
-| $\alpha$ (`HIER_MACRO_TILT_STRENGTH`)    | 1.0 |
-| Mode (`HIER_MACRO_TILT_MODE`)            | `'asymmetric'` (default) / `'symmetric'` / `'off'` |
-| Risky asset set (`HIER_MACRO_TILT_ASSETS`) | (SPX, OIL) |
+| Hierarchical C parameter | Value |
+| ------------------------ | ----- |
+| $\kappa$ (`HIER_C_KAPPA_GAMMA`) — risk-aversion sensitivity | 4.0 |
+| $s$ (`HIER_C_SIGMA_SCALE`) — covariance inflation | 1.0 |
+| $T$ (`HIER_C_MACRO_TEMPERATURE`) — posterior temper | 4.0 |
+| $\beta$ (`HIER_C_PRIOR_BLEND`) — uniform-prior blend | 0.10 |
+| `HIER_C_STRESS_METRIC` | `'vol'` (alt: `'drawdown'`, `'sharpe'`) |
+
+(Hierarchical B has no extra parameters beyond the macro-layer
+settings in §4.1; the expected-return tilt has been removed.)
 
 ---
 

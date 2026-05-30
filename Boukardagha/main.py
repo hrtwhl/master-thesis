@@ -2,16 +2,22 @@
 main.py
 =======
 End-to-end driver:
-    1) run pure-market Wasserstein-HMM backtest      (run_pure.py)
-    2) run hierarchical macro+market backtest        (run_hier.py)
-    3) aggregate -> tables + charts + benchmarks     (aggregate.py)
-    4) build narrative summary                       (narrative.py)
-    5) build HTML report                             (report.py)
+    1) run pure-market Wasserstein-HMM backtest        (run_pure.py)
+    2) run BOTH hierarchical backtests (B and C)        (run_hier.py)
+    3) aggregate -> tables + charts + benchmarks        (aggregate.py)
+    4) build narrative summary                          (narrative.py)
+    5) build HTML report                                (report.py)
+
+Strategies compared:
+    PureMarket_WHMM  - Boukardagha (2026) replication
+    Hierarchical_B   - macro x market joint mixture, no tilt
+    Hierarchical_C   - macro as risk modulator (Fix C)
+    EqualWeight, SixtyForty - passive benchmarks
 
 Each stage is also a standalone script:
 
     python run_pure.py        # pure-market backtest only
-    python run_hier.py        # hierarchical backtest only
+    python run_hier.py        # both hierarchical backtests (B and C)
     python aggregate.py       # reads raw CSVs and plots
     python narrative.py       # builds Markdown summary
     python report.py          # builds HTML report

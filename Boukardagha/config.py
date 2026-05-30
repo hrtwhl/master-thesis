@@ -166,35 +166,72 @@ MIN_OBS_PER_REGIME = 60      # min obs to compute robust regime moments
 
 
 # -----------------------------------------------------------------------
-# 7)  Hierarchical-strategy improvements (our extension)
+# 7)  Hierarchical strategy B  (macro x market joint mixture, no tilt)
 # -----------------------------------------------------------------------
-# The first OOS run revealed three issues with the hierarchical
-# extension (see analysis_results.md for details):
-#   (1) macro layer collapses to 2 effective regimes that look almost
-#       identical in asset-return space;
-#   (2) the *symmetric* macro tilt below scales risky-asset expected
-#       returns by 1 + tanh(S_g, i), which is positive in BOTH
-#       effective macro regimes (SPX historical Sharpe is positive in
-#       both), so the tilt only ever pushes mu_SPX UP -- the opposite
-#       of what we want in adverse regimes;
-#   (3) macro regimes are too persistent (mean spell length 130-300
-#       days) relative to a daily MVO rebalancing horizon.
+# This is the original hierarchical extension WITHOUT any expected-return
+# tilt (the earlier 'off'/'asymmetric' modes, which were numerically
+# identical because the macro posterior is one-hot ~99% of the time and
+# the asymmetric tilt self-cancels).
 #
-# Two knobs are available to address (2):
+# Mechanism (see methodology.md SS4-B):
+#   - Macro WHMM on 21-d macro features, templates tracked in MACRO
+#     FEATURE space.
+#   - Market WHMM (shared) on asset features.
+#   - Joint conditional moments on (g_macro, h_market) cells, with
+#     market-only fallback for sparse cells.
+#   - Composite probability p(t,g,h) = p_macro(t,g) * p_market(t,h).
+#   - mu_t, Sigma_t = sum_{g,h} p(t,g,h) (mu_{g,h}, Sigma_{g,h}).
+# No expected-return tilt is applied: mu_t feeds MVO unchanged.
 #
-#   HIER_MACRO_TILT_STRENGTH  (alpha)  : tilt magnitude (0 disables)
-#   HIER_MACRO_TILT_MODE              : 'symmetric'  -> 1 + alpha * tanh(S_g, i)        [original]
-#                                       'asymmetric' -> 1 + alpha * tanh(S_g, i - S_bar) [FIX B]
-#                                       'off'        -> mu_t unchanged                  [FIX A]
-#   HIER_MACRO_TILT_ASSETS            : tuple of asset names to tilt
+# (No tunable parameters here beyond the macro-layer settings in
+#  block 4 above.)
+
+
+# -----------------------------------------------------------------------
+# 7C)  Hierarchical strategy C  (macro = risk modulator, our Fix-C)
+# -----------------------------------------------------------------------
+# Hierarchical C addresses the three problems diagnosed in
+# analysis_results.md by changing HOW the macro layer is used, while
+# KEEPING the full 21-feature Mulliner macro set (the 2-effective-regime
+# degeneracy is itself a result we report).
 #
-# Recommended for evaluation:
-#   - 'off'        -> isolates the pure-mixture effect of the macro layer
-#   - 'asymmetric' -> tilts mu_SPX DOWN when current macro regime's
-#                     historical Sharpe is BELOW the unconditional Sharpe
-HIER_MACRO_TILT_STRENGTH = 1.0
-HIER_MACRO_TILT_MODE     = "asymmetric"      # 'off' | 'symmetric' | 'asymmetric'
-HIER_MACRO_TILT_ASSETS   = ("SPX", "OIL")
+# Three design changes vs. Hierarchical B:
+#
+#   (C1) Macro templates are tracked in ASSET-OUTCOME space.
+#        Instead of tracking macro templates by what macro FEATURES look
+#        like, we track them by how ASSETS behave (forward-return mean
+#        and covariance) in each macro regime.  This makes the macro
+#        regimes maximally discriminative for allocation by construction.
+#
+#   (C2) No joint-cell fragmentation; macro modulates RISK, not direction.
+#        The market layer keeps FULL control of expected returns mu_t
+#        (exactly the pure-market mu_t).  The macro layer modulates only
+#        the RISK side:
+#          - the effective risk aversion gamma_t, and
+#          - a multiplicative scale on Sigma_t,
+#        both driven by a macro "stress" score.  This preserves the
+#        clean directional signal of the market layer (which was being
+#        diluted by joint-cell averaging in Hierarchical B).
+#
+#   (C3) Softened (tempered) macro posterior.
+#        The macro posterior is one-hot ~99% of the time, carrying no
+#        usable uncertainty.  We temper it with exponent
+#        HIER_C_MACRO_TEMPERATURE and blend with a uniform prior of
+#        weight HIER_C_PRIOR_BLEND, so the optimizer responds to graded
+#        macro uncertainty rather than a hard switch.
+
+# Macro stress -> risk multiplier.  gamma_t = gamma * (1 + kappa * stress_t)
+# and Sigma_t *= (1 + sigma_scale * stress_t), where stress_t in [0, 1]
+# is the tempered-posterior-weighted, cross-sectionally normalized
+# historical turbulence (annualized vol of the portfolio-relevant
+# forward returns) of the active macro regime.
+HIER_C_KAPPA_GAMMA   = 4.0    # risk-aversion sensitivity to macro stress
+HIER_C_SIGMA_SCALE   = 1.0    # covariance inflation sensitivity to macro stress
+HIER_C_MACRO_TEMPERATURE = 4.0  # >1 softens (flattens) the macro posterior
+HIER_C_PRIOR_BLEND   = 0.10   # blend weight on a uniform macro prior in [0,1]
+# Stress definition: 'vol' uses regime forward-return vol; 'drawdown'
+# uses regime within-spell max drawdown; 'sharpe' uses negative Sharpe.
+HIER_C_STRESS_METRIC = "vol"
 
 
 # -----------------------------------------------------------------------

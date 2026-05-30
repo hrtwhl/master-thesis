@@ -243,3 +243,63 @@ Looking at calendar year 2025 specifically:
 (I don't have the cum-PnL panel in your uploaded files but the
 behaviour is consistent with Boukardagha's reported Liberation-Day
 result.)
+
+---
+
+## 6. Update: Hierarchical C (Fix C implementation)
+
+After the tilt-mode comparison (`off` ≈ `asymmetric`, both ≈ Pure on
+return but worse on drawdown; `symmetric` strictly dominated), the
+expected-return tilt was **removed entirely**. The hierarchical model
+we had so far is now called **Hierarchical B** (joint mixture, no tilt).
+
+We additionally implement **Hierarchical C**, which operationalises the
+three Fix-C recommendations from §4 — *keeping the full 21-feature
+Mulliner macro set* (the 2-effective-regime degeneracy is itself a
+reported result, not something we engineer away):
+
+1. **Macro templates tracked in asset-outcome space (C1).** The macro
+   WHMM still reads the 21 macro features, but its persistent templates
+   are matched/updated using the Gaussian of *forward asset returns*
+   per macro state. Macro regimes are now discriminative for allocation
+   by construction.
+
+2. **Macro modulates risk, not direction (C2).** The market layer alone
+   produces μ_t and Σ_t (identical to pure-market), so its clean
+   defensive-rotation signal is never diluted. The macro layer emits a
+   scalar stress score in [0,1] that scales the effective risk aversion
+   γ_t = γ·(1 + κ·stress_t) and inflates Σ_t ← Σ_t·(1 + s·stress_t).
+
+3. **Tempered macro posterior (C3).** The one-hot macro posterior is
+   softened (temperature T) and blended with a uniform prior (weight β)
+   so the stress score varies smoothly rather than switching hard.
+
+### Why C should behave better than B
+
+- In benign macro regimes (stress → 0) C **reduces exactly to
+  Pure-Market**, so it cannot do structurally worse than the pure model
+  in calm periods (unlike B, which always re-mixes moments across joint
+  cells and thereby dilutes the market signal even in calm periods).
+- In turbulent macro regimes C **de-risks** by raising γ and inflating
+  Σ, flattening the allocation toward diversification — without
+  fighting the market layer's directional choice.
+- C's turnover is structurally close to Pure-Market's, because the
+  macro layer only rescales the risk term; it does not introduce a
+  second rapidly-switching set of conditional means.
+
+### What to look for in the full OOS run
+
+- Does C's max drawdown come in **below** Pure-Market's (the whole
+  point — the macro stress signal should add downside protection in
+  2008 / 2020 / 2022)?
+- Is C's turnover materially lower than B's (it should be, by design)?
+- Does the asset-outcome-space tracking yield macro templates whose
+  *persistence* and *asset-Sharpe profiles* differ from B's
+  feature-space templates (compare T09b vs T09c, T06b vs T06c)?
+- The macro layer will still likely collapse to ~2 effective regimes
+  (Mulliner features unchanged) — but with outcome-space tracking those
+  2 regimes should at least be a "calm" vs "turbulent" split that maps
+  onto a usable stress score.
+
+These are the comparisons to make once the full 2005-2025 backtest of
+all three strategies (Pure, B, C) is available.

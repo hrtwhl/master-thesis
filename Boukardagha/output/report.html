@@ -1,24 +1,30 @@
 <!DOCTYPE html><html><head><meta charset='utf-8'>
-<title>Regime-Aware Investing — Replication & Hierarchical Extension</title>
-
-    <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-           max-width: 1100px; margin: 2em auto; padding: 0 1em;
-           color: #222; line-height: 1.45; }
-    h1, h2, h3 { color: #1a1a1a; }
-    h1 { border-bottom: 2px solid #999; padding-bottom: 6px; }
-    h2 { border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 2em; }
-    table.data { border-collapse: collapse; margin: 1em 0; font-size: 90%; }
-    table.data th, table.data td { padding: 4px 10px; border-bottom: 1px solid #ddd; }
-    table.data th { background: #f0f0f0; text-align: left; }
-    figure { text-align: center; }
-    .deviation { background: #fff8e0; padding: 0.5em 1em;
-                 border-left: 4px solid #d4a017; margin: 0.5em 0; }
-    </style></head><body>
-    
+<title>Regime-Aware Investing — Replication & Two Hierarchical Extensions</title>
+<style>
+         body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;
+              max-width:1100px;margin:2em auto;padding:0 1em;color:#222;line-height:1.45;}
+         h1{border-bottom:2px solid #999;padding-bottom:6px;}
+         h2{border-bottom:1px solid #ccc;padding-bottom:4px;margin-top:2em;}
+         table.data{border-collapse:collapse;margin:1em 0;font-size:90%;}
+         table.data th,table.data td{padding:4px 10px;border-bottom:1px solid #ddd;}
+         table.data th{background:#f0f0f0;text-align:left;}
+         figure{text-align:center;}
+         .note{background:#eef6ff;padding:.5em 1em;border-left:4px solid #3b82f6;margin:.5em 0;}
+         .dev{background:#fff8e0;padding:.5em 1em;border-left:4px solid #d4a017;margin:.5em 0;}
+         </style></head><body>
 <h1>Explainable Regime-Aware Investing</h1>
-<p><b>Replication of Boukardagha (2026)</b> + <b>Hierarchical (FST98) Extension</b></p>
+<p><b>Boukardagha (2026) replication</b> + <b>two hierarchical (FST98) extensions</b></p>
 <p>OOS window: <b>2005-01-01</b> &rarr; <b>2025-12-31</b>.</p>
+<div class="note">
+        <b>Strategies.</b>
+        <b>PureMarket_WHMM</b>: Boukardagha market-regime WHMM + MVO.
+        <b>Hierarchical_B</b>: macro × market joint-mixture moments, no
+        expected-return tilt. <b>Hierarchical_C</b>: macro layer used as
+        a <i>risk modulator</i> — macro templates tracked in
+        asset-outcome space, tempered macro posterior, stress-scaled
+        risk aversion &gamma;<sub>t</sub> and covariance; the market
+        layer retains full control of the expected-return direction.
+        </div>
 <h2>1. Headline performance</h2>
 <h3>Risk-adjusted performance</h3><table class="dataframe data">
   <thead>
@@ -45,12 +51,12 @@
       <td>0.3212</td>
       <td>-0.1277</td>
       <td>-0.1351</td>
-      <td>0.5418</td>
+      <td>0.5420</td>
       <td>5478.0000</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
-      <td>0.0436</td>
+      <th>Hierarchical_B</th>
+      <td>0.0435</td>
       <td>0.0789</td>
       <td>0.5519</td>
       <td>0.7072</td>
@@ -58,6 +64,18 @@
       <td>-0.1816</td>
       <td>-0.1973</td>
       <td>0.5424</td>
+      <td>5478.0000</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>0.0390</td>
+      <td>0.0482</td>
+      <td>0.8101</td>
+      <td>1.1250</td>
+      <td>0.4199</td>
+      <td>-0.0930</td>
+      <td>-0.0954</td>
+      <td>0.5425</td>
       <td>5478.0000</td>
     </tr>
     <tr>
@@ -86,11 +104,11 @@
     </tr>
   </tbody>
 </table>
-<figure style="margin: 1em 0"><img src="charts/11_strategy_comparison.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Cumulative log return - all strategies</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/12_drawdown_comparison.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Drawdown comparison (on wealth)</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/15_underwater.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Underwater drawdown</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/13_rolling_sharpe_1y.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Rolling 1y annualised Sharpe</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/14_annual_returns.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Annual log returns per strategy</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/11_strategy_comparison.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Cumulative log return — all strategies</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/12_drawdown_comparison.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Drawdown comparison (on wealth)</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/15_underwater.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Underwater drawdown</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/13_rolling_sharpe_1y.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Rolling 1y annualised Sharpe</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/14_annual_returns.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Annual log returns per strategy</figcaption></figure>
 <h2>2. Trading frictions and concentration</h2>
 <h3>Turnover summary</h3><table class="dataframe data">
   <thead>
@@ -113,12 +131,20 @@
       <td>0.0172</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>0.0037</td>
       <td>0.0000</td>
       <td>0.0091</td>
       <td>0.0478</td>
       <td>0.0153</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>0.0014</td>
+      <td>0.0000</td>
+      <td>0.0032</td>
+      <td>0.0144</td>
+      <td>0.0062</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -138,7 +164,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Effective number of positions</h3><table class="dataframe data">
+<h3>Effective # positions</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -153,9 +179,14 @@
       <td>2.6563</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
-      <td>2.4954</td>
+      <th>Hierarchical_B</th>
+      <td>2.4955</td>
       <td>2.3422</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>3.1445</td>
+      <td>3.1031</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -169,7 +200,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Pure-market allocation by asset</h3><table class="dataframe data">
+<h3>Pure-market allocation</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -217,7 +248,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Hierarchical allocation by asset</h3><table class="dataframe data">
+<h3>Hierarchical B allocation</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -265,17 +296,61 @@
     </tr>
   </tbody>
 </table>
-<h2>3. Pure-Market Wasserstein-HMM &mdash; diagnostics</h2>
-<figure style="margin: 1em 0"><img src="charts/pure_01_cum_pnl_scatter.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Cum PnL coloured by template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_03_weights_stacked.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Portfolio weights</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_02_turnover.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Daily turnover</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_04_n_eff.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">N_eff over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_05_asset_sharpe_by_regime.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Asset Sharpe by template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_06_stacked_cum_pnl_by_regime.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Stacked cumulative PnL by template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_07_K_history.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Selected K over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_08_template_count.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Number of templates over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_09_template_label.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Dominant template over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/pure_10_template_posterior.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Max template posterior over time</figcaption></figure>
+<h3>Hierarchical C allocation</h3><table class="dataframe data">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>Average Weight</th>
+      <th>Weight Volatility</th>
+      <th>Time &gt; 10%</th>
+      <th>Avg |dW|</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>SPX</th>
+      <td>0.1534</td>
+      <td>0.0687</td>
+      <td>0.7864</td>
+      <td>0.0008</td>
+    </tr>
+    <tr>
+      <th>BOND</th>
+      <td>0.4427</td>
+      <td>0.0582</td>
+      <td>1.0000</td>
+      <td>0.0005</td>
+    </tr>
+    <tr>
+      <th>GOLD</th>
+      <td>0.1034</td>
+      <td>0.0471</td>
+      <td>0.3361</td>
+      <td>0.0005</td>
+    </tr>
+    <tr>
+      <th>OIL</th>
+      <td>0.0324</td>
+      <td>0.0231</td>
+      <td>0.0000</td>
+      <td>0.0003</td>
+    </tr>
+    <tr>
+      <th>USD</th>
+      <td>0.2681</td>
+      <td>0.0863</td>
+      <td>1.0000</td>
+      <td>0.0005</td>
+    </tr>
+  </tbody>
+</table>
+<h2>3. Pure-Market diagnostics</h2>
+<figure style="margin:1em 0"><img src="charts/pure_01_cum_pnl_scatter.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Cum PnL coloured by template</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/pure_03_weights_stacked.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Portfolio weights</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/pure_05_asset_sharpe_by_regime.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Asset Sharpe by template</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/pure_06_stacked_cum_pnl_by_regime.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Stacked cumulative PnL by template</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/pure_07_K_history.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Selected K over time</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/pure_09_template_label.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Dominant template over time</figcaption></figure>
 <h3>Portfolio performance by template</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
@@ -337,7 +412,7 @@
       <td>0.0277</td>
       <td>0.0725</td>
       <td>0.3823</td>
-      <td>0.5420</td>
+      <td>0.5424</td>
       <td>-0.1109</td>
     </tr>
     <tr>
@@ -502,69 +577,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Day-on-day regime transition matrix (rows -> cols)</h3><table class="dataframe data">
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th>0</th>
-      <th>1</th>
-      <th>2</th>
-      <th>3</th>
-      <th>4</th>
-    </tr>
-    <tr>
-      <th>from</th>
-      <th></th>
-      <th></th>
-      <th></th>
-      <th></th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th>0</th>
-      <td>0.9448</td>
-      <td>0.0023</td>
-      <td>0.0000</td>
-      <td>0.0345</td>
-      <td>0.0184</td>
-    </tr>
-    <tr>
-      <th>1</th>
-      <td>0.0000</td>
-      <td>0.9782</td>
-      <td>0.0000</td>
-      <td>0.0201</td>
-      <td>0.0017</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <td>0.0000</td>
-      <td>0.0012</td>
-      <td>0.9709</td>
-      <td>0.0105</td>
-      <td>0.0175</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>0.0058</td>
-      <td>0.0029</td>
-      <td>0.0041</td>
-      <td>0.9793</td>
-      <td>0.0079</td>
-    </tr>
-    <tr>
-      <th>4</th>
-      <td>0.0085</td>
-      <td>0.0026</td>
-      <td>0.0128</td>
-      <td>0.0128</td>
-      <td>0.9633</td>
-    </tr>
-  </tbody>
-</table>
-<h3>Regime persistence (spell lengths)</h3><table class="dataframe data">
+<h3>Regime persistence</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -619,14 +632,13 @@
     </tr>
   </tbody>
 </table>
-<h2>4. Hierarchical Wasserstein-HMM &mdash; diagnostics</h2>
-<h3>4.1 Macro-layer (top of hierarchy)</h3>
-<figure style="margin: 1em 0"><img src="charts/hier_macro_label.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Dominant macro template over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_macro_prob.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Max macro posterior over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_macro_KG.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Macro K and G over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_macro_vs_market.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Joint frequency of (macro, market) templates</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_macro_05_asset_sharpe_by_regime.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Asset Sharpe by macro template</figcaption></figure>
-<h3>Portfolio performance by macro template</h3><table class="dataframe data">
+<h2>4. Hierarchical B — macro × market joint mixture</h2>
+<figure style="margin:1em 0"><img src="charts/hierB_macro_label.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Dominant macro template over time</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/hierB_macro_prob.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Max macro posterior over time</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/hierB_macro_vs_market.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Joint frequency of (macro, market) templates</figcaption></figure>
+<p><em>(missing hierB_macro_macro_05_asset_sharpe_by_regime.png)</em></p>
+<figure style="margin:1em 0"><img src="charts/hierB_03_weights_stacked.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Portfolio weights</figcaption></figure>
+<h3>Performance by macro template</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -656,7 +668,7 @@
       <td>0.7563</td>
       <td>0.0430</td>
       <td>0.0749</td>
-      <td>0.5747</td>
+      <td>0.5746</td>
       <td>0.5448</td>
       <td>-0.1418</td>
     </tr>
@@ -664,9 +676,9 @@
       <th>1</th>
       <td>7</td>
       <td>0.0013</td>
-      <td>-0.3837</td>
-      <td>0.0390</td>
-      <td>-9.8315</td>
+      <td>-0.3840</td>
+      <td>0.0391</td>
+      <td>-9.8310</td>
       <td>0.2857</td>
       <td>-0.0114</td>
     </tr>
@@ -682,7 +694,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Asset Sharpe/Mean/Vol by macro template</h3><table class="dataframe data">
+<h3>Asset stats by macro template</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -796,43 +808,7 @@
     </tr>
   </tbody>
 </table>
-<h3>Macro regime transition matrix</h3><table class="dataframe data">
-  <thead>
-    <tr style="text-align: right;">
-      <th></th>
-      <th>0</th>
-      <th>1</th>
-      <th>4</th>
-    </tr>
-    <tr>
-      <th>from</th>
-      <th></th>
-      <th></th>
-      <th></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th>0</th>
-      <td>0.9969</td>
-      <td>0.0007</td>
-      <td>0.0024</td>
-    </tr>
-    <tr>
-      <th>1</th>
-      <td>0.4286</td>
-      <td>0.5714</td>
-      <td>0.0000</td>
-    </tr>
-    <tr>
-      <th>4</th>
-      <td>0.0075</td>
-      <td>0.0000</td>
-      <td>0.9925</td>
-    </tr>
-  </tbody>
-</table>
-<h3>Macro regime persistence</h3><table class="dataframe data">
+<h3>Macro regime persistence (feature-space templates)</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -873,18 +849,21 @@
     </tr>
   </tbody>
 </table>
-<h3>4.2 Market-layer (bottom of hierarchy)</h3>
-<figure style="margin: 1em 0"><img src="charts/hier_01_cum_pnl_scatter.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Cum PnL coloured by market template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_03_weights_stacked.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Portfolio weights</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_02_turnover.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Daily turnover</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_04_n_eff.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">N_eff over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_05_asset_sharpe_by_regime.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Asset Sharpe by market template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_06_stacked_cum_pnl_by_regime.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Stacked cumulative PnL by market template</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_07_K_history.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Market K over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_08_template_count.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Market G over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_09_template_label.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Market label over time</figcaption></figure>
-<figure style="margin: 1em 0"><img src="charts/hier_10_template_posterior.png" style="width:900px; max-width:100%" /><figcaption style="font-size:90%; color:#555">Max market posterior over time</figcaption></figure>
-<h3>Portfolio performance by market template</h3><table class="dataframe data">
+<h2>5. Hierarchical C — macro as risk modulator (Fix C)</h2>
+<div class="note">
+        Macro templates are tracked in <b>asset-outcome space</b>, the
+        macro posterior is <b>tempered</b> and blended with a uniform
+        prior, and the resulting stress score scales the effective risk
+        aversion &gamma;<sub>t</sub> = &gamma;·(1 + &kappa;·stress) and
+        inflates &Sigma;<sub>t</sub>. The market layer owns &mu;.
+        </div>
+<figure style="margin:1em 0"><img src="charts/hierC_macro_stress.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Macro stress and effective risk aversion</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/hierC_macro_label.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Dominant macro template over time</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/hierC_macro_prob.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Max macro posterior over time</figcaption></figure>
+<figure style="margin:1em 0"><img src="charts/hierC_macro_vs_market.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Joint frequency of (macro, market) templates</figcaption></figure>
+<p><em>(missing hierC_macro_macro_05_asset_sharpe_by_regime.png)</em></p>
+<figure style="margin:1em 0"><img src="charts/hierC_03_weights_stacked.png" style="width:900px;max-width:100%"/><figcaption style="font-size:90%;color:#555">Portfolio weights</figcaption></figure>
+<h3>Performance by macro template</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
@@ -910,69 +889,161 @@
   <tbody>
     <tr>
       <th>0</th>
-      <td>2937</td>
-      <td>0.5361</td>
-      <td>0.0464</td>
-      <td>0.0636</td>
-      <td>0.7287</td>
-      <td>0.5485</td>
-      <td>-0.1094</td>
+      <td>4143</td>
+      <td>0.7563</td>
+      <td>0.0445</td>
+      <td>0.0439</td>
+      <td>1.0130</td>
+      <td>0.5474</td>
+      <td>-0.0635</td>
     </tr>
     <tr>
       <th>1</th>
-      <td>1246</td>
-      <td>0.2275</td>
-      <td>0.0998</td>
-      <td>0.1039</td>
-      <td>0.9604</td>
-      <td>0.5530</td>
-      <td>-0.1418</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <td>471</td>
-      <td>0.0860</td>
-      <td>-0.0405</td>
-      <td>0.0795</td>
-      <td>-0.5096</td>
-      <td>0.4989</td>
-      <td>-0.1399</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>68</td>
-      <td>0.0124</td>
-      <td>-0.0793</td>
-      <td>0.0734</td>
-      <td>-1.0800</td>
-      <td>0.6176</td>
-      <td>-0.0622</td>
+      <td>7</td>
+      <td>0.0013</td>
+      <td>-0.3124</td>
+      <td>0.0327</td>
+      <td>-9.5638</td>
+      <td>0.1429</td>
+      <td>-0.0089</td>
     </tr>
     <tr>
       <th>4</th>
-      <td>756</td>
-      <td>0.1380</td>
-      <td>0.0033</td>
-      <td>0.0846</td>
-      <td>0.0395</td>
-      <td>0.5212</td>
-      <td>-0.1740</td>
+      <td>1328</td>
+      <td>0.2424</td>
+      <td>0.0239</td>
+      <td>0.0596</td>
+      <td>0.4002</td>
+      <td>0.5294</td>
+      <td>-0.0835</td>
     </tr>
   </tbody>
 </table>
-<h3>Market regime transition matrix</h3><table class="dataframe data">
+<h3>Asset stats by macro template</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
       <th></th>
-      <th>0</th>
-      <th>1</th>
-      <th>2</th>
-      <th>3</th>
-      <th>4</th>
+      <th>Ann Mean</th>
+      <th>Ann Mean.1</th>
+      <th>Ann Mean.2</th>
+      <th>Ann Mean.3</th>
+      <th>Ann Mean.4</th>
+      <th>Ann Vol</th>
+      <th>Ann Vol.1</th>
+      <th>Ann Vol.2</th>
+      <th>Ann Vol.3</th>
+      <th>Ann Vol.4</th>
+      <th>Sharpe</th>
+      <th>Sharpe.1</th>
+      <th>Sharpe.2</th>
+      <th>Sharpe.3</th>
+      <th>Sharpe.4</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>asset</th>
+      <td>BOND</td>
+      <td>GOLD</td>
+      <td>OIL</td>
+      <td>SPX</td>
+      <td>USD</td>
+      <td>BOND</td>
+      <td>GOLD</td>
+      <td>OIL</td>
+      <td>SPX</td>
+      <td>USD</td>
+      <td>BOND</td>
+      <td>GOLD</td>
+      <td>OIL</td>
+      <td>SPX</td>
+      <td>USD</td>
     </tr>
     <tr>
-      <th>from</th>
+      <th>regime</th>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+      <td>NaN</td>
+    </tr>
+    <tr>
+      <th>0</th>
+      <td>0.03916799817515633</td>
+      <td>0.08129280748549907</td>
+      <td>0.02879936808995792</td>
+      <td>0.10759640858224528</td>
+      <td>0.011175582663175136</td>
+      <td>0.06294504638521142</td>
+      <td>0.1577292338933602</td>
+      <td>0.3060848421403912</td>
+      <td>0.14257655653460446</td>
+      <td>0.05739045839395288</td>
+      <td>0.6222570388693627</td>
+      <td>0.5153946765534959</td>
+      <td>0.09408949456160454</td>
+      <td>0.7546570852700514</td>
+      <td>0.19472893188029816</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>-0.23388072169462149</td>
+      <td>-1.6086984534199154</td>
+      <td>-1.3513443420213544</td>
+      <td>-0.2708753613247481</td>
+      <td>0.05981777593022386</td>
+      <td>0.043914589176312184</td>
+      <td>0.09356727255460626</td>
+      <td>0.29123605192076785</td>
+      <td>0.05890047993355738</td>
+      <td>0.03537412502005737</td>
+      <td>-5.325809169149151</td>
+      <td>-17.19296084516167</td>
+      <td>-4.64003111259383</td>
+      <td>-4.598865096350806</td>
+      <td>1.6910036897395135</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>0.005029073068890435</td>
+      <td>0.18888520534362996</td>
+      <td>-0.0033544509924279906</td>
+      <td>-0.005697753143513663</td>
+      <td>-0.0036967113724714795</td>
+      <td>0.10237711702083829</td>
+      <td>0.20726353962725566</td>
+      <td>0.632711056518069</td>
+      <td>0.28809943482363787</td>
+      <td>0.08515407231899003</td>
+      <td>0.04912301904210485</td>
+      <td>0.9113286672770453</td>
+      <td>-0.005301710722250029</td>
+      <td>-0.019777036865766793</td>
+      <td>-0.04341203270494774</td>
+    </tr>
+  </tbody>
+</table>
+<h3>Macro regime persistence (outcome-space templates)</h3><table class="dataframe data">
+  <thead>
+    <tr style="text-align: right;">
       <th></th>
+      <th>n_spells</th>
+      <th>mean_length</th>
+      <th>median_length</th>
+      <th>max_length</th>
+    </tr>
+    <tr>
+      <th>regime</th>
       <th></th>
       <th></th>
       <th></th>
@@ -982,47 +1053,64 @@
   <tbody>
     <tr>
       <th>0</th>
-      <td>0.9956</td>
-      <td>0.0014</td>
-      <td>0.0000</td>
-      <td>0.0000</td>
-      <td>0.0031</td>
+      <td>14</td>
+      <td>295.9286</td>
+      <td>138.5000</td>
+      <td>1448</td>
     </tr>
     <tr>
       <th>1</th>
-      <td>0.0024</td>
-      <td>0.9888</td>
-      <td>0.0024</td>
-      <td>0.0008</td>
-      <td>0.0056</td>
-    </tr>
-    <tr>
-      <th>2</th>
-      <td>0.0000</td>
-      <td>0.0085</td>
-      <td>0.9894</td>
-      <td>0.0000</td>
-      <td>0.0021</td>
-    </tr>
-    <tr>
-      <th>3</th>
-      <td>0.0147</td>
-      <td>0.0000</td>
-      <td>0.0000</td>
-      <td>0.8676</td>
-      <td>0.1176</td>
+      <td>3</td>
+      <td>2.3333</td>
+      <td>1.0000</td>
+      <td>5</td>
     </tr>
     <tr>
       <th>4</th>
-      <td>0.0132</td>
-      <td>0.0079</td>
-      <td>0.0026</td>
-      <td>0.0106</td>
-      <td>0.9656</td>
+      <td>10</td>
+      <td>132.8000</td>
+      <td>18.5000</td>
+      <td>642</td>
     </tr>
   </tbody>
 </table>
-<h2>5. Crisis-window stress test</h2>
+<h3>Macro stress / effective gamma summary</h3><table class="dataframe data">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>macro_stress</th>
+      <th>gamma_eff</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>mean</th>
+      <td>0.3317</td>
+      <td>11.6345</td>
+    </tr>
+    <tr>
+      <th>median</th>
+      <td>0.2184</td>
+      <td>9.3680</td>
+    </tr>
+    <tr>
+      <th>std</th>
+      <td>0.2348</td>
+      <td>4.6970</td>
+    </tr>
+    <tr>
+      <th>min</th>
+      <td>0.1597</td>
+      <td>8.1946</td>
+    </tr>
+    <tr>
+      <th>max</th>
+      <td>0.9458</td>
+      <td>23.9166</td>
+    </tr>
+  </tbody>
+</table>
+<h2>6. Crisis-window stress test</h2>
 <h3>Per-strategy performance over named crises</h3><table class="dataframe data">
   <thead>
     <tr style="text-align: right;">
@@ -1048,7 +1136,7 @@
   </thead>
   <tbody>
     <tr>
-      <th rowspan="4" valign="top">GFC_2008</th>
+      <th rowspan="5" valign="top">GFC_2008</th>
       <th>PureMarket_WHMM</th>
       <td>2008-01-01</td>
       <td>2009-06-30</td>
@@ -1058,13 +1146,22 @@
       <td>-0.0863</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2008-01-01</td>
       <td>2009-06-30</td>
       <td>391</td>
       <td>-0.0754</td>
       <td>-0.5836</td>
       <td>-0.1399</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2008-01-01</td>
+      <td>2009-06-30</td>
+      <td>391</td>
+      <td>-0.0055</td>
+      <td>-0.0501</td>
+      <td>-0.0663</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1085,7 +1182,7 @@
       <td>-0.3541</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Euro_2011</th>
+      <th rowspan="5" valign="top">Euro_2011</th>
       <th>PureMarket_WHMM</th>
       <td>2011-06-01</td>
       <td>2012-06-30</td>
@@ -1095,13 +1192,22 @@
       <td>-0.1277</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2011-06-01</td>
       <td>2012-06-30</td>
       <td>283</td>
       <td>0.0153</td>
-      <td>0.1725</td>
+      <td>0.1726</td>
       <td>-0.0674</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2011-06-01</td>
+      <td>2012-06-30</td>
+      <td>283</td>
+      <td>0.0697</td>
+      <td>1.3265</td>
+      <td>-0.0336</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1122,7 +1228,7 @@
       <td>-0.0859</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Taper_2013</th>
+      <th rowspan="5" valign="top">Taper_2013</th>
       <th>PureMarket_WHMM</th>
       <td>2013-04-01</td>
       <td>2013-12-31</td>
@@ -1132,13 +1238,22 @@
       <td>-0.0870</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2013-04-01</td>
       <td>2013-12-31</td>
       <td>197</td>
       <td>-0.0868</td>
       <td>-1.4456</td>
       <td>-0.0893</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2013-04-01</td>
+      <td>2013-12-31</td>
+      <td>197</td>
+      <td>-0.0340</td>
+      <td>-0.9324</td>
+      <td>-0.0459</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1159,7 +1274,7 @@
       <td>-0.0555</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">China_2015</th>
+      <th rowspan="5" valign="top">China_2015</th>
       <th>PureMarket_WHMM</th>
       <td>2015-06-01</td>
       <td>2016-02-29</td>
@@ -1169,13 +1284,22 @@
       <td>-0.0743</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2015-06-01</td>
       <td>2016-02-29</td>
       <td>196</td>
       <td>0.0058</td>
       <td>0.1532</td>
       <td>-0.0393</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2015-06-01</td>
+      <td>2016-02-29</td>
+      <td>196</td>
+      <td>-0.0082</td>
+      <td>-0.2261</td>
+      <td>-0.0529</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1196,7 +1320,7 @@
       <td>-0.0667</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Q4_2018</th>
+      <th rowspan="5" valign="top">Q4_2018</th>
       <th>PureMarket_WHMM</th>
       <td>2018-09-01</td>
       <td>2019-01-31</td>
@@ -1206,13 +1330,22 @@
       <td>-0.0665</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2018-09-01</td>
       <td>2019-01-31</td>
       <td>109</td>
       <td>0.0119</td>
       <td>0.6445</td>
       <td>-0.0341</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2018-09-01</td>
+      <td>2019-01-31</td>
+      <td>109</td>
+      <td>0.0087</td>
+      <td>0.6298</td>
+      <td>-0.0316</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1233,7 +1366,7 @@
       <td>-0.1145</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Covid_2020</th>
+      <th rowspan="5" valign="top">Covid_2020</th>
       <th>PureMarket_WHMM</th>
       <td>2020-02-01</td>
       <td>2020-06-30</td>
@@ -1243,13 +1376,22 @@
       <td>-0.0730</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2020-02-01</td>
       <td>2020-06-30</td>
       <td>107</td>
       <td>0.0493</td>
       <td>1.0728</td>
       <td>-0.0886</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2020-02-01</td>
+      <td>2020-06-30</td>
+      <td>107</td>
+      <td>0.0412</td>
+      <td>1.3528</td>
+      <td>-0.0546</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1270,23 +1412,32 @@
       <td>-0.2016</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Rates_2022</th>
+      <th rowspan="5" valign="top">Rates_2022</th>
       <th>PureMarket_WHMM</th>
       <td>2022-01-01</td>
       <td>2022-12-31</td>
       <td>260</td>
       <td>-0.0896</td>
-      <td>-1.2586</td>
+      <td>-1.2585</td>
       <td>-0.0994</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2022-01-01</td>
       <td>2022-12-31</td>
       <td>260</td>
       <td>-0.1646</td>
-      <td>-1.8660</td>
+      <td>-1.8661</td>
       <td>-0.1746</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2022-01-01</td>
+      <td>2022-12-31</td>
+      <td>260</td>
+      <td>-0.0909</td>
+      <td>-1.3574</td>
+      <td>-0.0868</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1307,23 +1458,32 @@
       <td>-0.2304</td>
     </tr>
     <tr>
-      <th rowspan="4" valign="top">Liberation_2025</th>
+      <th rowspan="5" valign="top">Liberation_2025</th>
       <th>PureMarket_WHMM</th>
       <td>2025-01-01</td>
       <td>2025-09-30</td>
       <td>195</td>
       <td>0.0870</td>
-      <td>1.4848</td>
+      <td>1.4849</td>
       <td>-0.0657</td>
     </tr>
     <tr>
-      <th>Hierarchical_WHMM</th>
+      <th>Hierarchical_B</th>
       <td>2025-01-01</td>
       <td>2025-09-30</td>
       <td>195</td>
       <td>0.0683</td>
-      <td>1.0824</td>
+      <td>1.0820</td>
       <td>-0.0848</td>
+    </tr>
+    <tr>
+      <th>Hierarchical_C</th>
+      <td>2025-01-01</td>
+      <td>2025-09-30</td>
+      <td>195</td>
+      <td>0.0557</td>
+      <td>1.3650</td>
+      <td>-0.0458</td>
     </tr>
     <tr>
       <th>EqualWeight</th>
@@ -1345,9 +1505,8 @@
     </tr>
   </tbody>
 </table>
-<h2>6. Methodology notes</h2>
-<p>This work faithfully replicates Boukardagha (2026) on a 21-year OOS window (Jan 2005 - Dec 2025), and adds a hierarchical macro layer following Fine, Singer &amp; Tishby (1998).</p>
-<p><b>Deviations from Boukardagha (2026):</b></p>
-<div class="deviation">D1: n_iter = 100 (paper: 300). EM converges in &lt;= 80 iters on this data.  Set HMM_N_ITER = 300 in config.py to recover the paper exactly.</div>
-<p><b>Efficiency:</b> daily refits are warm-started from the previous day&apos;s fitted parameters, exploiting EM&apos;s monotonicity to land on the same likelihood-surface basin in 3&ndash;10 iterations rather than starting cold from random initialisation.  This is purely a wall-time optimisation; the converged maximum is identical.</p>
+<h2>7. Methodology notes</h2>
+<p>Full mathematical specification in <code>methodology.md</code>; analysis of the macro-overlay behaviour in <code>analysis_results.md</code>.</p>
+<div class="dev">Only deviation from Boukardagha (2026): <code>HMM_N_ITER = 100</code> (paper: 300). EM converges in &le; 80 iters at tol=1e-3 on this data; set to 300 to recover the paper exactly.</div>
+<div class="dev">Daily refits are warm-started from the previous day&apos;s fitted parameters (EM monotonicity); the converged maximum is identical to a cold start.</div>
 </body></html>
